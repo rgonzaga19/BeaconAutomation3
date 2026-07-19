@@ -476,12 +476,13 @@ class SOAAutomation:
 
             for r in self.results:
                 line = f"{r['transmittal']}: {r['status'].upper()} - {r['message']}"
+
                 if r["status"] == "success":
-                    logger.success(f"✓ {line}")
+                    logger.success(f"[SUCCESS] {line}")
                 elif r["status"] == "skipped":
-                    logger.warning(f"○ {line}")
+                    logger.warning(f"[SKIPPED] {line}")
                 else:
-                    logger.error(f"✗ {line}")
+                    logger.error(f"[FAILED] {line}")
 
             logger.info("-" * 60)
             logger.info(
