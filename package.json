@@ -1,6 +1,6 @@
 {
   "name": "beabots",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Beabots — Beacon/CF2/SOA automation suite (Electron front end + Python backend)",
   "main": "main.js",
   "author": "Romel Gonzaga",

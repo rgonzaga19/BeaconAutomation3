@@ -111,7 +111,7 @@ copies `python-build\server\` (now including `ms-playwright`) into
 ```
 Compile BeaconInstaller.iss in Inno Setup
 ```
-Packages `release\win-unpacked\*` into a single `Beabots_Setup_v2.0.0.exe`
+Packages `release\win-unpacked\*` into a single `Beabots_Setup_v3.0.0.exe`
 in the `Output\` folder.
 
 ### One-shot rebuild, once you're comfortable with the steps

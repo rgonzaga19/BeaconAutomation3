@@ -3,7 +3,7 @@
 ; -------------------------------
 
 #define MyAppName "Beabots"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "3.0.0"
 #define MyAppPublisher "Romel Gonzaga"
 #define MyAppURL "https://github.com/rgonzaga19"
 #define MyAppExeName "Beabots.exe"
@@ -23,7 +23,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 
 OutputDir=Output
-OutputBaseFilename=Beabots_Setup_v2.0.0
+OutputBaseFilename=Beabots_Setup_v3.0.0
 
 Compression=lzma
 SolidCompression=yes
