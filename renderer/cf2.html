@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>CF2</title>
+<link rel="stylesheet" href="css/theme.css" />
+<style>
+  .page-title {
+    text-align: center;
+    color: var(--accent);
+    font-size: 18px;
+    font-weight: bold;
+    padding: 15px 0;
+  }
+
+  .top-card { margin: 0 20px 10px 20px; padding: 10px; }
+  .claim-date-row { display: flex; }
+  .claim-field { padding: 10px 20px 10px 10px; }
+  .claim-field label {
+    display: block;
+    color: var(--accent);
+    font-size: 10pt;
+    font-weight: bold;
+    margin-bottom: 5px;
+  }
+  .claim-field select {
+    background: var(--bg-card);
+    color: var(--text-pri);
+    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10pt;
+    padding: 4px 6px;
+  }
+  .claim-field select:disabled { opacity: 0.5; }
+
+  .content-row { display: flex; margin: 0 10px 10px 10px; }
+  .upload-col { flex: 1; padding: 0 10px; }
+
+  #uploadBtn {
+    margin: 5px 0 10px 0;
+  }
+  #fileLabel {
+    display: block;
+    color: var(--text-sec);
+    padding: 0 0 8px 0;
+  }
+  #downloadTemplateLink {
+    color: #2E86DE;
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: 9pt;
+  }
+
+  .guide-card {
+    width: 230px;
+    margin-left: 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    text-align: center;
+    padding: 14px 10px;
+  }
+  .guide-card:hover {
+    background: var(--glow-cyan);
+    border-color: var(--accent);
+  }
+  .guide-card .guide-title { color: var(--accent); font-weight: bold; margin-bottom: 8px; }
+  .guide-card .guide-desc { color: var(--text-sec); font-size: 9pt; margin-bottom: 12px; }
+  .guide-card .guide-open-btn {
+    display: inline-block;
+    background: var(--accent);
+    color: black;
+    font-weight: bold;
+    font-size: 9pt;
+    padding: 5px 10px;
+  }
+  .guide-card:hover .guide-open-btn { background: var(--text-pri); }
+
+  .summary-panel { margin: 0 20px 10px 20px; padding: 10px 10px 14px 10px; }
+  .summary-panel h4 { margin: 0 0 5px 10px; color: var(--accent); font-size: 10pt; }
+  .summary-panel .summary-line { margin: 0 20px; color: var(--text-pri); }
+
+  .bottom-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin: 0 20px 20px 20px;
+  }
+  .bottom-area h4 { margin: 0 0 5px 0; color: var(--accent); font-size: 10pt; flex: none; }
+  #cf2LogBox { flex: 1; min-height: 0; }
+
+  #startBtn {
+    width: 100%;
+    margin-top: 10px;
+    padding: 14px;
+    font-size: 11pt;
+    flex: none;
+  }
+
+  /* User Guide modal specifics */
+  .guide-modal .modal-box { max-width: 600px; max-height: 80vh; overflow-y: auto; }
+  .guide-modal h2 {
+    text-align: center;
+    color: var(--accent);
+    margin: 0 0 20px 0;
+  }
+  .guide-step {
+    display: flex;
+    gap: 18px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    padding: 12px 15px;
+    margin-bottom: 10px;
+  }
+  .guide-step .badge-col {
+    width: 60px;
+    flex: none;
+    text-align: center;
+  }
+  .guide-step .badge {
+    display: inline-block;
+    background: var(--accent);
+    color: var(--bg-dark);
+    font-weight: bold;
+    width: 22px;
+    height: 22px;
+    line-height: 22px;
+    margin-bottom: 8px;
+  }
+  .guide-step .step-icon { font-size: 24px; }
+  .guide-step .step-title { color: var(--accent); font-weight: bold; margin-bottom: 4px; }
+  .guide-step .step-desc { color: var(--text-pri); font-size: 9pt; white-space: pre-line; }
+</style>
+</head>
+<body>
+  <div class="app-window">
+
+    <div class="titlebar">
+      <span class="icon">⚡</span>
+      <span class="title">CF2 AUTOMATION</span>
+      <span class="spacer"></span>
+      <div class="titlebar-btn" id="btnMinimize">─</div>
+      <div class="titlebar-btn" id="btnMaximize">🗖</div>
+      <div class="titlebar-btn close" id="btnClose">✕</div>
+    </div>
+
+    <div class="page-title">CF2</div>
+
+    <div class="top-card panel">
+      <div class="claim-date-row">
+        <div class="claim-field">
+          <label>Claim Year</label>
+          <select id="claimYear"></select>
+        </div>
+        <div class="claim-field">
+          <label>Claim Month</label>
+          <select id="claimMonth"></select>
+        </div>
+      </div>
+
+      <div class="content-row">
+        <div class="upload-col">
+          <button class="solid-btn" id="uploadBtn">📂 Upload Excel File</button>
+          <span id="fileLabel">No file selected</span>
+          <span id="downloadTemplateLink">Download Excel Template</span>
+        </div>
+        <div class="guide-card" id="guideCard">
+          <div class="guide-title">📘 USER GUIDE</div>
+          <div class="guide-desc">Read the quick guide<br />before uploading<br />your Excel template.</div>
+          <div class="guide-open-btn">Open Guide  →</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="summary-panel panel">
+      <h4>Workbook Summary</h4>
+      <div class="summary-line" id="sheetsLine">Sheets : -</div>
+      <div class="summary-line" id="patientsLine">Patients Found : 0</div>
+    </div>
+
+    <div class="bottom-area">
+      <h4>Logs</h4>
+      <div class="log-box" id="cf2LogBox"></div>
+      <button class="solid-btn" id="startBtn">Start Automation</button>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
+
+  <script src="../node_modules/socket.io-client/dist/socket.io.min.js"></script>
+  <script src="js/common.js"></script>
+  <script src="js/cf2.js"></script>
+</body>
+</html>

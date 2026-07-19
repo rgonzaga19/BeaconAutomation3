@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Settings</title>
+<link rel="stylesheet" href="css/theme.css" />
+<style>
+  body { overflow: hidden; }
+  .panel { margin: 0 16px; }
+  .field-row { padding: 12px 14px 0 14px; }
+  .field-row label {
+    display: block;
+    color: var(--accent);
+    font-size: 9px;
+    font-weight: bold;
+    margin-bottom: 4px;
+  }
+  .field-row input {
+    width: 100%;
+    padding: 5px 6px;
+  }
+
+  .toggle-row {
+    padding: 6px 14px 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-sec);
+    font-size: 8pt;
+    cursor: pointer;
+  }
+
+  #accessKeyContainer { padding: 12px 14px 0 14px; }
+  #accessKeyField { display: none; }
+  #accessKeyToggle {
+    color: var(--accent);
+    font-size: 8pt;
+    cursor: pointer;
+  }
+
+  .session-warning {
+    color: var(--warning);
+    font-size: 8pt;
+    text-align: right;
+    padding: 8px 14px 14px 14px;
+  }
+
+  .btn-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 10px 16px 16px 16px;
+  }
+</style>
+</head>
+<body>
+  <div class="app-window" style="border: none;">
+
+    <div class="titlebar">
+      <span class="icon">⚙</span>
+      <span class="title">SETTINGS</span>
+      <span class="spacer"></span>
+      <div class="titlebar-btn" id="btnMinimize">─</div>
+      <div class="titlebar-btn close" id="btnClose">✕</div>
+    </div>
+
+    <div class="panel">
+      <div class="field-row">
+        <label>▸ USERNAME</label>
+        <input type="text" id="username" />
+      </div>
+
+      <div class="field-row">
+        <label>▸ PASSWORD</label>
+        <input type="password" id="password" />
+      </div>
+      <label class="toggle-row">
+        <input type="checkbox" id="showPassword" />
+        Show password
+      </label>
+
+      <div id="accessKeyContainer">
+        <div id="accessKeyField">
+          <label>▸ ACCESS KEY</label>
+          <input type="text" id="accessKey" />
+        </div>
+        <span id="accessKeyToggle">👁  View Access Key</span>
+      </div>
+
+      <div class="session-warning">⚠  Saving will clear the active session.</div>
+    </div>
+
+    <div class="btn-row">
+      <button class="cyber-btn" id="cancelBtn">CANCEL</button>
+      <button class="cyber-btn" id="saveBtn">SAVE SETTINGS</button>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
+
+  <script src="js/common.js"></script>
+  <script src="js/settings.js"></script>
+</body>
+</html>

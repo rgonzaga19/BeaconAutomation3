@@ -1,0 +1,319 @@
+/* ============================================================
+   Shared theme — same palette/measurements as the tkinter app's
+   BG_DARK / BG_PANEL / BG_CARD / BORDER / ACCENT constants.
+   Every window (dashboard, CF2, Upload SOA, Settings) includes
+   this file so the look stays identical across all of them.
+   ============================================================ */
+
+:root {
+  --bg-dark: #0a0e1a;
+  --bg-panel: #0f1629;
+  --bg-card: #131d35;
+  --border: #1e3a5f;
+  --accent: #00d4ff;
+  --accent2: #0099cc;
+  --glow-cyan: #004466;
+  --success: #00ff88;
+  --warning: #ffaa00;
+  --error: #ff4466;
+  --text-pri: #e8f4fd;
+  --text-sec: #6b8cae;
+
+  --font-mono: "Cascadia Code", "Consolas", "Courier New", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-dark);
+  color: var(--text-pri);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Whole-window accent edge, matching the accent border look from the old
+   tkinter windows. Uses an inset box-shadow instead of a hard border —
+   renders crisper against Electron's native frameless-window resize
+   border on Windows, which otherwise shows through as a rough/doubled
+   edge alongside a plain CSS border. Slight rounding softens the corners
+   further. */
+.app-window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-radius: 6px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* ---------- Custom title bar (replaces the native OS frame,
+   same as overrideredirect(True) in tkinter) ---------- */
+.titlebar {
+  height: 34px;
+  min-height: 34px;
+  background: var(--bg-panel);
+  display: flex;
+  align-items: center;
+  -webkit-app-region: drag; /* draggable, like the tkinter drag binding */
+  border-bottom: 1px solid var(--border);
+}
+
+.titlebar .icon {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: bold;
+  padding: 0 4px 0 12px;
+}
+
+.titlebar .title {
+  color: var(--text-sec);
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+
+.titlebar .spacer {
+  flex: 1;
+}
+
+.titlebar-btn {
+  -webkit-app-region: no-drag; /* buttons must opt out of window drag */
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-sec);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.titlebar-btn:hover {
+  background: var(--glow-cyan);
+  color: var(--accent);
+}
+
+.titlebar-btn.close:hover {
+  background: var(--error);
+  color: var(--bg-dark);
+}
+
+/* ---------- Buttons (CyberButton equivalent) ---------- */
+.cyber-btn {
+  -webkit-app-region: no-drag;
+  background: var(--bg-card);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  font-weight: bold;
+  padding: 7px 18px;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.cyber-btn:hover {
+  background: var(--glow-cyan);
+}
+
+.cyber-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cyber-btn.danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.cyber-btn.danger:hover {
+  background: #1a0010;
+}
+
+/* Solid accent action button (the tkinter add_hover() style — used for
+   "Start Automation", "Upload Excel File", etc.) */
+.solid-btn {
+  -webkit-app-region: no-drag;
+  background: var(--accent);
+  color: black;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  font-weight: bold;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.solid-btn:hover {
+  background: var(--glow-cyan);
+  color: var(--accent);
+}
+
+.solid-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- Section label (the "▸ SECTION" divider) ---------- */
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 2px 14px;
+}
+
+.section-label span {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.section-label .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ---------- Panels / cards ---------- */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+
+textarea, input[type="text"], input[type="password"] {
+  background: var(--bg-card);
+  color: var(--text-pri);
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px;
+  outline: none;
+  user-select: text;
+}
+
+textarea:focus, input:focus {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.text-sec {
+  color: var(--text-sec);
+}
+
+.text-small {
+  font-size: 11px;
+}
+
+/* ---------- Log viewer ---------- */
+.log-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.log-line.INFO { color: var(--text-pri); }
+.log-line.SUCCESS { color: var(--success); }
+.log-line.WARNING { color: var(--warning); }
+.log-line.ERROR { color: var(--error); }
+.log-line.DIM { color: var(--text-sec); }
+
+/* ---------- Status dot ---------- */
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-sec);
+  display: inline-block;
+}
+
+.status-dot.running { background: var(--accent); }
+.status-dot.done { background: var(--success); }
+.status-dot.error { background: var(--error); }
+
+/* ---------- Progress bar ---------- */
+.progress-track {
+  height: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 30%;
+  background: var(--accent);
+  animation: progress-slide 1.1s linear infinite;
+}
+
+.progress-fill.idle {
+  animation: none;
+  width: 0;
+}
+
+@keyframes progress-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+/* ---------- Modal (About / Settings-as-modal, message boxes) ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-box {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  min-width: 320px;
+  max-width: 480px;
+  padding: 20px;
+}
+
+.modal-box h3 {
+  margin: 0 0 12px 0;
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.modal-box p {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 16px 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
