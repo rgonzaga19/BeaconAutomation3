@@ -28,6 +28,7 @@ build/
 dist/
 release/
 python-build/
+Output/
 
 ###############################################################################
 # PyInstaller

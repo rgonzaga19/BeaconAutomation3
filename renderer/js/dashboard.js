@@ -52,7 +52,7 @@ async function showAboutModal() {
   const settings = await fetchJSON("/api/settings");
   const body =
 `Beabots
-Version 2.0
+Version 3.0
 
 Automates the mapping of medicines.
 Automates the data encoding in CF2/CF4.
