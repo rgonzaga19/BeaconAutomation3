@@ -14,6 +14,7 @@ const MONTH_NAMES = [
 // Title bar
 // ---------------------------------------------------------------------------
 document.getElementById("btnMinimize").addEventListener("click", () => window.beabots?.minimize());
+document.getElementById("btnMaximize").addEventListener("click", () => window.beabots?.maximize?.());
 document.getElementById("btnClose").addEventListener("click", () => window.beabots?.close());
 
 // ---------------------------------------------------------------------------
