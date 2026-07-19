@@ -6,7 +6,10 @@
 <link rel="stylesheet" href="css/theme.css" />
 <style>
   body { overflow: hidden; }
-  .panel { margin: 0 16px; }
+  /* Ensure the content stretches and leaves no unused space below */
+  .panel { margin: 0 16px; flex: 1; }
+  .btn-row { flex-shrink: 0; }
+
   .field-row { padding: 12px 14px 0 14px; }
   .field-row label {
     display: block;

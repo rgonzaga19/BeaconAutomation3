@@ -183,7 +183,8 @@ document.getElementById("downloadTemplateLink").addEventListener("click", async 
 // User Guide modal — verbatim steps from cf2_window.py's guide_steps list
 // ---------------------------------------------------------------------------
 const GUIDE_STEPS = [
-  [1, "📋", "Automation Includes", "Draft, CF2, Signatories and CF2 Preview."],
+  [1, "📋", "Prepare the report from AR","The data will be used in the cf2 template \n" + 
+    "This Automation includes: Draft, CF2, Signatories and CF2 Preview."],
   [2, "⬇", "Download the Excel Template", "Click 'Download Excel Template'.\nUse the provided template."],
   [3, "🗂", "Edit the Template",
     "Add Member's pin (if dependent add slash at the end).\n" +
