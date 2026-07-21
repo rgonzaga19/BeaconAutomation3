@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -16,6 +17,100 @@ if getattr(sys, "frozen", False):
 from logger import logger
 from reports import report
 import browser_session
+
+
+# Common Filipino compound-surname particles. When the token right
+# before the last word of a name is one of these, it's treated as part
+# of the surname (e.g. "DE OCAMPO", "DE JESUS", "DE LOS SANTOS", "DELA
+# CRUZ") instead of being left behind as a stray middle name.
+SURNAME_PARTICLES = {
+    "DE", "DEL", "DELA", "DELAS", "DELOS",
+    "SAN", "SANTA", "STA", "STO", "SANTO",
+    "MAC", "MC", "VAN", "VON", "DA", "DI", "LA", "LAS", "LOS",
+}
+
+
+def _split_surname_and_given(name):
+    """
+    Splits an upper-cased patient name into (surname_tokens, given_tokens),
+    assuming Western order (surname last — matches how patient_name comes
+    off the Beacon claim details page). Walks backward from the last word
+    absorbing known surname particles so multi-word surnames like
+    "DE OCAMPO" or "DE LOS SANTOS" are captured whole, instead of losing
+    the particle to the given-name side.
+    """
+    tokens = name.upper().split()
+
+    if len(tokens) <= 1:
+        return tokens, []
+
+    surname_tokens = [tokens[-1]]
+    i = len(tokens) - 2
+
+    while i >= 0 and tokens[i] in SURNAME_PARTICLES:
+        surname_tokens.insert(0, tokens[i])
+        i -= 1
+
+    given_tokens = tokens[:i + 1]
+    return surname_tokens, given_tokens
+
+
+def _normalize(text):
+    """
+    Upper-cases and strips everything but letters/digits, so spaces,
+    underscores, hyphens, and commas in a filename don't get in the way
+    of a match — "De Ocampo", "DE_OCAMPO", and "DEOCAMPO" all normalize
+    to the same "DEOCAMPO" string.
+    """
+    return re.sub(r"[^A-Z0-9]", "", text.upper())
+
+
+def _type_into_number_field(page, locator, value, max_attempts=3):
+    """
+    Reliably enters a value into one of Beacon's Summary/Professional Fees
+    number-spinner inputs.
+
+    These are React-controlled fields — clicking one and typing right
+    after can outrun the field actually becoming interactive, which
+    silently drops the first keystrokes (e.g. typing "1540" lands as just
+    "40" because the field wasn't ready to accept input yet). This gives
+    the field a short moment to settle after the click, then reads back
+    the value to confirm it actually landed, retrying if it didn't.
+    """
+    target_value = f"{value:.2f}"
+
+    for attempt in range(1, max_attempts + 1):
+        locator.scroll_into_view_if_needed()
+        locator.click(force=True)
+
+        # Let the field finish becoming interactive/typable before typing.
+        page.wait_for_timeout(200)
+
+        page.keyboard.press("Control+A")
+        page.keyboard.press("Backspace")
+        locator.type(target_value, delay=50)
+
+        actual = locator.input_value().strip()
+        if actual == target_value:
+            return
+
+        logger.warning(
+            f"Attempt {attempt}/{max_attempts}: expected '{target_value}', "
+            f"got '{actual}' — retrying"
+        )
+
+    # Last resort: set the value directly instead of via keystrokes.
+    locator.click(force=True)
+    locator.fill(target_value)
+    actual = locator.input_value().strip()
+
+    if actual != target_value:
+        raise Exception(
+            f"Could not set field to '{target_value}' after "
+            f"{max_attempts} attempts (final value: '{actual}')"
+        )
+
+    logger.warning(f"Fell back to fill() to set '{target_value}'")
 
 
 def open_transmittals(page):
@@ -194,37 +289,106 @@ class SOAAutomation:
             # Locate the SOA file automatically
             # -------------------------------------------------------------------------
 
-            parts = self.patient_name.upper().split()
+            surname_tokens, given_tokens = _split_surname_and_given(
+                self.patient_name
+            )
 
-            surname = parts[-1]
-            tokens = [surname] + parts[:-1]
+            surname_key = "".join(surname_tokens)          # e.g. "DEOCAMPO"
+            bare_surname_key = surname_tokens[-1] if surname_tokens else ""  # e.g. "OCAMPO"
+            given_key = "".join(given_tokens)              # e.g. "JUANCRUZ"
+            given_initial = given_tokens[0][0] if given_tokens else ""
 
             logger.info(f"Searching SOA in: {self.soa_folder}")
-            logger.info(f"Search tokens: {tokens}")
-
-            
-            matches = []
+            logger.info(
+                f"Surname: '{' '.join(surname_tokens)}' | "
+                f"Given name: '{' '.join(given_tokens)}'"
+            )
 
             if not self.soa_folder.exists():
                 raise Exception(
                     f"SOA folder does not exist: {self.soa_folder}"
                 )
 
-            # Search only Excel files
+            all_files = []
             for pattern in ("*.xlsx", "*.xls"):
+                all_files.extend(self.soa_folder.glob(pattern))
 
-                for file in self.soa_folder.glob(pattern):
+            def _matching(key):
+                if not key:
+                    return []
+                return [f for f in all_files if key in _normalize(f.name)]
 
-                    filename = file.name.upper()
+            def _has_given_name_marker(filename_norm):
+                """
+                True if the given name (in full, or just its first letter)
+                sits immediately next to the surname in the normalized
+                filename — covers "DEOCAMPOJ.xlsx", "DEOCAMPO_JUAN.xlsx",
+                "JUAN_DEOCAMPO.xlsx", etc.
+                """
+                idx = filename_norm.find(surname_key)
+                if idx == -1:
+                    return False
 
-                    if any(token in filename for token in tokens):
-                        matches.append(file)
+                after = filename_norm[idx + len(surname_key):]
+                before = filename_norm[:idx]
+
+                if given_key and (after.startswith(given_key) or before.endswith(given_key)):
+                    return True
+                if given_initial and (after.startswith(given_initial) or before.endswith(given_initial)):
+                    return True
+                return False
+
+            # 1) Priority: full surname match (compound-aware, e.g. "DEOCAMPO").
+            matches = _matching(surname_key)
+
+            # 2) Fallback: surname without the leading particle, in case the
+            #    filename dropped "DE"/"DEL"/etc. (e.g. just "OCAMPO.xlsx").
+            if not matches and bare_surname_key != surname_key:
+                logger.info(
+                    f"No match for full surname '{surname_key}' — "
+                    f"trying bare surname '{bare_surname_key}'"
+                )
+                matches = _matching(bare_surname_key)
+
+            # 3) Last resort: no surname match at all — search by given name.
+            if not matches:
+                logger.warning(
+                    f"No surname match for '{' '.join(surname_tokens)}' — "
+                    "falling back to first-name search"
+                )
+                matches = _matching(given_key)
+                if not matches and given_initial:
+                    matches = _matching(given_initial)
 
             if not matches:
                 raise Exception(
                     f"No SOA file found for patient '{self.patient_name}' "
                     f"inside {self.soa_folder}"
                 )
+
+            # If several files share the same surname (e.g. two patients with
+            # the same last name), narrow down using the given name.
+            if len(matches) > 1:
+                narrowed = [
+                    f for f in matches
+                    if _has_given_name_marker(_normalize(f.name))
+                ]
+
+                if narrowed:
+                    logger.info(
+                        f"Multiple files matched surname "
+                        f"'{' '.join(surname_tokens)}' — narrowed to "
+                        f"{len(narrowed)} using given name"
+                    )
+                    matches = narrowed
+                else:
+                    logger.warning(
+                        f"Multiple files matched surname "
+                        f"'{' '.join(surname_tokens)}' and none could be "
+                        "narrowed by given name — using most recent"
+                    )
+
+            logger.info(f"Candidate SOA files: {[f.name for f in matches]}")
 
             # Pick the newest matching file
             soa_file = max(matches, key=lambda f: f.stat().st_mtime)
@@ -328,13 +492,7 @@ class SOAAutomation:
 
                     discount = round(amount * 0.20, 2)
 
-                    target.scroll_into_view_if_needed()
-                    target.click(force=True)
-
-                    self.page.keyboard.press("Control+A")
-                    self.page.keyboard.press("Backspace")
-
-                    target.type(f"{discount:.2f}", delay=30)
+                    _type_into_number_field(self.page, target, discount)
 
                     logger.info(
                         f"Row {row}: {amount} -> {discount:.2f}"
@@ -389,16 +547,10 @@ class SOAAutomation:
                     pf_discount_input = self.page.locator("input#pwdDiscount0").nth(1)
 
                 # Actual Charges
-                pf_actual_input.click(force=True)
-                self.page.keyboard.press("Control+A")
-                self.page.keyboard.press("Backspace")
-                pf_actual_input.type(f"{pf_actual:.2f}", delay=30)
+                _type_into_number_field(self.page, pf_actual_input, pf_actual)
 
                 # Discount
-                pf_discount_input.click(force=True)
-                self.page.keyboard.press("Control+A")
-                self.page.keyboard.press("Backspace")
-                pf_discount_input.type(f"{pf_discount:.2f}", delay=30)
+                _type_into_number_field(self.page, pf_discount_input, pf_discount)
 
                 logger.success("Professional Fees populated.")
 

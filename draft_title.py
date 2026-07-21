@@ -2,6 +2,7 @@
 Builds the Beacon "Create Draft" remarks/title from a patient's name and
 their first/last treatment date, e.g.:
 
+    ABAO JUNE 5, 2026                   (single day — first and last treatment are the same)
     ABAO JUNE 1-10, 2026                (same month)
     ABAO JUNE 28 - JUL 2, 2026          (spans two months — 2nd month abbreviated)
 
@@ -32,7 +33,12 @@ def build_draft_title(patient_name, first_treatment, last_treatment):
     """
     name = str(patient_name).strip().upper()
 
-    if first_treatment.month == last_treatment.month and first_treatment.year == last_treatment.year:
+    if first_treatment == last_treatment:
+        date_part = (
+            f"{MONTH_FULL[first_treatment.month]} "
+            f"{first_treatment.day}, {first_treatment.year}"
+        )
+    elif first_treatment.month == last_treatment.month and first_treatment.year == last_treatment.year:
         date_part = (
             f"{MONTH_FULL[first_treatment.month]} "
             f"{first_treatment.day}-{last_treatment.day}, {last_treatment.year}"
