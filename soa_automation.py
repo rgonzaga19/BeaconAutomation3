@@ -29,6 +29,29 @@ SURNAME_PARTICLES = {
     "MAC", "MC", "VAN", "VON", "DA", "DI", "LA", "LAS", "LOS",
 }
 
+# Generational suffixes that show up as their own token right after the
+# surname (e.g. "JUAN DELA CRUZ JR", "JUAN DELA CRUZ III."). Compared with
+# any trailing period stripped, so both "JR" and "JR." match.
+NAME_SUFFIXES = {"JR", "SR", "II", "III", "IV"}
+
+
+def _strip_name_suffixes(tokens):
+    """
+    Removes generational suffix tokens like "JR"/"SR"/"II"/"III"/"IV"
+    (with or without a trailing period, e.g. "JR." or "III.") from a
+    list of name tokens before surname/given splitting runs.
+
+    _split_surname_and_given() assumes the *last* token is the surname.
+    Beacon's patient_name puts a suffix like "JR" right after the
+    surname — e.g. "JUAN DELA CRUZ JR" — so without this, the suffix
+    itself got treated as the whole surname ("JR") and "DELA CRUZ" was
+    left behind as if it were part of the given name, which then made
+    the SOA filename search key on the wrong name entirely. Stripping is
+    done across all tokens (not just the final one) so a stray suffix
+    elsewhere in the string can't confuse the split either.
+    """
+    return [t for t in tokens if t.rstrip(".") not in NAME_SUFFIXES]
+
 
 def _split_surname_and_given(name):
     """
@@ -40,6 +63,7 @@ def _split_surname_and_given(name):
     the particle to the given-name side.
     """
     tokens = name.upper().split()
+    tokens = _strip_name_suffixes(tokens)
 
     if len(tokens) <= 1:
         return tokens, []
@@ -56,13 +80,9 @@ def _split_surname_and_given(name):
 
 
 def _normalize(text):
-    """
-    Upper-cases and strips everything but letters/digits, so spaces,
-    underscores, hyphens, and commas in a filename don't get in the way
-    of a match — "De Ocampo", "DE_OCAMPO", and "DEOCAMPO" all normalize
-    to the same "DEOCAMPO" string.
-    """
-    return re.sub(r"[^A-Z0-9]", "", text.upper())
+    # Keep Ñ as a valid letter.
+    text = text.upper()
+    return re.sub(r"[^A-Z0-9Ñ]", "", text)
 
 
 def _type_into_number_field(page, locator, value, max_attempts=3):
@@ -293,10 +313,10 @@ class SOAAutomation:
                 self.patient_name
             )
 
-            surname_key = "".join(surname_tokens)          # e.g. "DEOCAMPO"
-            bare_surname_key = surname_tokens[-1] if surname_tokens else ""  # e.g. "OCAMPO"
-            given_key = "".join(given_tokens)              # e.g. "JUANCRUZ"
-            given_initial = given_tokens[0][0] if given_tokens else ""
+            surname_key = _normalize("".join(surname_tokens))          # e.g. "DEOCAMPO"
+            bare_surname_key = _normalize(surname_tokens[-1]) if surname_tokens else ""  # e.g. "OCAMPO"
+            given_key = _normalize("".join(given_tokens))              # e.g. "JUANCRUZ"
+            given_initial = _normalize(given_tokens[0])[:1] if given_tokens else ""
 
             logger.info(f"Searching SOA in: {self.soa_folder}")
             logger.info(
