@@ -113,6 +113,7 @@ function createWindow(key, htmlFile, options = {}) {
     frame: false,
     thickFrame: false,
     hasShadow: false,
+    useContentSize: true,
     icon: ICON_PATH,
     backgroundColor: "#0a0e1a",
     show: false,

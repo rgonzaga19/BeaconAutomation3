@@ -51,6 +51,7 @@ html, body {
   position: relative;
   display: flex;
   flex-direction: column;
+  width: 100vw;
   height: 100vh;
   overflow: hidden;
   box-sizing: border-box;
@@ -58,13 +59,26 @@ html, body {
 
 /* The accent glow is drawn on a separate absolutely-positioned overlay
    rather than directly on .app-window, so a solid box-shadow/border
-   isn't sharing paint duties with anything else that clips children. */
+   isn't sharing paint duties with anything else that clips children.
+
+   Fix for a resize bug (only the top/left edge of the border was
+   visible until the window was manually resized): .app-window's width
+   used to be implicit (auto), unlike its explicit `height: 100vh`, and
+   the overlay sat flush at `inset: 0`. On an Electron frameless-window
+   resize, the right/bottom edges — which depend on the measured
+   width/height — could repaint a sub-pixel late/short relative to the
+   top/left edges (which don't), and `overflow: hidden` clipped the
+   difference away. Giving .app-window an explicit width, pulling the
+   overlay in by 1px (`inset: 1px`), and forcing it onto its own
+   compositor layer with `will-change: box-shadow` gives the repaint a
+   1px buffer and keeps it in sync with .app-window's size. */
 .app-window::after {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: 1px;
   box-shadow: inset 0 0 0 1px var(--accent);
   pointer-events: none;
+  will-change: box-shadow;
 }
 
 /* Suppresses the accent glow border for windows that shouldn't show it
