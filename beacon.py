@@ -127,6 +127,38 @@ def run(transmittals, auto_encode_cf4=False):
                     page.wait_for_load_state("networkidle")
                 else:
                     print("No validation required — skipping.")
+
+                # ── Move to CF2 ────────────────────────────────────────────
+                logger.info("Opening CF2 tab...")
+                page.get_by_text("CF2", exact=True).click()
+
+                page.wait_for_load_state("networkidle")
+
+                page.wait_for_selector(
+                    "input[id*='sessionDate-DateMM-DD-YYYY']",
+                    timeout=10000
+                )
+
+                # --------------------------------------------------
+                # Read all Session Dates
+                # --------------------------------------------------
+                logger.info("Reading session dates...")
+
+                session_date_inputs = page.locator(
+                    "input[id*='sessions'][id*='sessionDate-DateMM-DD-YYYY']"
+                )
+
+                count = session_date_inputs.count()
+                logger.info(f"Found {count} session date(s).")
+
+                session_dates = []
+
+                for i in range(count):
+                    value = session_date_inputs.nth(i).input_value().strip()
+                    session_dates.append(value)
+                    logger.info(f"Session {i + 1}: {value}")
+
+                logger.info(f"All Session Dates: {session_dates}")
         
                 # ── Move to CF4 ────────────────────────────────────────────
                 logger.info("Opening CF4 tab...")
@@ -212,6 +244,118 @@ def run(transmittals, auto_encode_cf4=False):
                     _try_step(
                         "CF4 form saved",
                         lambda: page.get_by_role("button", name="SAVE").click(force=True)
+                    )
+
+                    # --------------------------------------------------
+                    # COURSE IN THE WARD
+                    # --------------------------------------------------
+                    def _open_course_in_the_ward():
+                        course_btn = page.locator("button:has-text('COURSE IN THE WARD')").first
+
+                        course_btn.wait_for(state="visible", timeout=10000)
+                        course_btn.scroll_into_view_if_needed()
+                        page.wait_for_timeout(500)
+
+                        try:
+                            course_btn.click(timeout=3000)
+                        except Exception:
+                            logger.warning("Normal click failed. Trying force click...")
+                            try:
+                                course_btn.click(force=True, timeout=3000)
+                            except Exception:
+                                logger.warning("Force click failed. Trying JavaScript click...")
+                                course_btn.evaluate("el => el.click()")
+
+                        page.wait_for_load_state("networkidle")
+
+                    _try_step(
+                        "Opened COURSE IN THE WARD",
+                        _open_course_in_the_ward
+                    )
+
+                    def _click_add_course_in_ward():
+                        add_btn = page.locator("button:has-text('ADD')").first
+
+                        add_btn.wait_for(state="visible", timeout=10000)
+                        add_btn.scroll_into_view_if_needed()
+                        page.wait_for_timeout(300)
+
+                        try:
+                            add_btn.click(timeout=3000)
+                        except Exception:
+                            logger.warning("Normal click failed. Trying force click...")
+                            try:
+                                add_btn.click(force=True, timeout=3000)
+                            except Exception:
+                                logger.warning("Force click failed. Trying JavaScript click...")
+                                add_btn.evaluate("el => el.click()")
+
+                        page.wait_for_load_state("networkidle")
+                    
+                    _try_step(
+                        "Clicked ADD",
+                        _click_add_course_in_ward
+                    )
+
+                    # --------------------------------------------------
+                    # Add Course in the Ward entries
+                    # --------------------------------------------------
+                    for session_date in session_dates:
+
+                        logger.info(f"Adding Course in the Ward entry for {session_date}")
+
+                        # Beacon auto-formats the dashes
+                        date_to_type = session_date.replace("-", "")
+
+                        # Date
+                        date_input = page.locator('input[name="date"]').first
+                        date_input.click()
+                        date_input.press("Control+A")
+                        date_input.press("Backspace")
+                        date_input.type(date_to_type, delay=80)
+
+                        # Doctor's Order / Action
+                        order_input = page.locator('textarea[name="order"]').first
+                        order_input.click()
+                        order_input.press("Control+A")
+                        order_input.press("Backspace")
+                        order_input.fill("UF GOAL MET AT L")
+
+                        # Save
+                        save_btn = page.locator("button:has-text('SAVE')").last
+                        save_btn.click(force=True)
+
+                        page.wait_for_load_state("networkidle")
+
+                        logger.success(f"Saved Course in the Ward entry for {session_date}")
+
+                        # Open Add dialog again for the next session
+                        if session_date != session_dates[-1]:
+                            _click_add_course_in_ward()
+
+                    def _close_course_in_the_ward():
+                        close_btn = page.locator("button:has-text('CLOSE')").first
+
+                        close_btn.wait_for(state="visible", timeout=10000)
+                        close_btn.scroll_into_view_if_needed()
+                        page.wait_for_timeout(300)
+
+                        try:
+                            close_btn.click(timeout=3000)
+                        except Exception:
+                            logger.warning("Normal click failed. Trying force click...")
+                            try:
+                                close_btn.click(force=True, timeout=3000)
+                            except Exception:
+                                logger.warning("Force click failed. Trying JavaScript click...")
+                                close_btn.evaluate("el => el.click()")
+
+                        page.wait_for_load_state("networkidle")
+
+
+                    _try_step(
+                        "Closed COURSE IN THE WARD",
+                        _close_course_in_the_ward
                     )
 
                     logger.info("Auto Encode CF4 finished.")
