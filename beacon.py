@@ -16,11 +16,13 @@ from reports import report
 from pathlib import Path
 import browser_session
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 
 def open_transmittals(page):
     try:
         page.get_by_role("button", name="E-CLAIMS").click()
-        page.wait_for_load_state("networkidle")
+        _safe_networkidle(page)
     except:
         pass
 
@@ -29,7 +31,7 @@ def open_transmittals(page):
         exact=False
     ).click()
 
-    page.wait_for_load_state("networkidle")
+    _safe_networkidle(page)
 
     logger.info("Returned to patient list")
 
@@ -48,6 +50,108 @@ def _try_step(step_name, action):
     except Exception as e:
         logger.warning(f"SKIPPED (Auto Encode CF4): {step_name} — {e}")
         return False
+
+def _safe_networkidle(page, timeout=15000):
+    """wait_for_load_state('networkidle') but never let it blow up the run.
+
+    Beacon keeps some background polling/websocket traffic alive on several
+    screens, so the page can legitimately never reach true 'networkidle'
+    within the default 30s timeout. When that happens Playwright raises
+    TimeoutError, which — this being called dozens of times per patient —
+    was silently turning normal pages into a failed/skipped patient. This
+    doesn't change what the automation does; it just stops a slow-to-settle
+    network from being treated the same as a real failure.
+    """
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout)
+    except PlaywrightTimeoutError:
+        logger.warning("networkidle wait timed out — continuing anyway")
+
+
+def _search_transmittal(page, transmittal_no, attempts=3):
+    """Type the transmittal number into the search box and confirm the
+    table actually refreshed before deciding it was found or not found.
+
+    Root cause of the intermittent false "not found" (especially on
+    repeats): Beacon's results table is client-rendered, so `networkidle`
+    can fire and the fixed 2s pause can elapse before the table has
+    actually swapped in the new rows — at that instant `tbody tr` is
+    either still empty or (worse) still showing the *previous* search's
+    row. Reading the count at that exact moment made a transmittal that
+    was really there look "not found".
+
+    Instead of a fixed sleep, this polls the DOM until either matching
+    rows appear or Beacon explicitly reports no results, and it verifies
+    the first row's text actually contains the transmittal number rather
+    than trusting a bare row count. If a stale/mismatched row is caught,
+    it retries the search rather than giving up immediately.
+
+    Returns True if the transmittal was found, False otherwise. Logging
+    and reporting for the "not found" case are left to the caller so the
+    overall behavior/flow is unchanged.
+    """
+    search_box = page.locator('input[type="text"]').first
+
+    for attempt in range(1, attempts + 1):
+        search_box.click()
+        search_box.press("Control+A")
+        search_box.press("Backspace")
+        search_box.fill(transmittal_no)
+        search_box.press("Enter")
+
+        _safe_networkidle(page)
+
+        # Poll instead of a fixed sleep: wait until rows show up or Beacon
+        # explicitly says there's nothing, whichever happens first.
+        try:
+            page.wait_for_function(
+                """() => {
+                    const rows = document.querySelectorAll('tbody tr');
+                    if (rows.length > 0) return true;
+                    const bodyText = (document.body.innerText || '').toLowerCase();
+                    return bodyText.includes('no data') ||
+                           bodyText.includes('no record') ||
+                           bodyText.includes('no results');
+                }""",
+                timeout=8000
+            )
+        except PlaywrightTimeoutError:
+            pass
+
+        # Small settle buffer for slower renders even after the poll passes.
+        page.wait_for_timeout(400)
+
+        row_count = page.locator("tbody tr").count()
+
+        if row_count > 0:
+            first_row_text = page.locator("tbody tr").first.inner_text()
+
+            if transmittal_no in first_row_text:
+                return True
+
+            if attempt < attempts:
+                logger.warning(
+                    f"Table showed a row not matching {transmittal_no} "
+                    f"(likely stale from a previous search) on attempt "
+                    f"{attempt}/{attempts}; retrying..."
+                )
+                page.wait_for_timeout(1000)
+                continue
+
+            # Last attempt: trust the row count even if the exact string
+            # match failed (e.g. formatting differences), same as the
+            # original behavior.
+            return True
+
+        if attempt < attempts:
+            logger.warning(
+                f"No rows found for transmittal {transmittal_no} on attempt "
+                f"{attempt}/{attempts}; retrying search..."
+            )
+            page.wait_for_timeout(1500)
+
+    return page.locator("tbody tr").count() > 0
+
 
 def run(transmittals, auto_encode_cf4=False):
     try:
@@ -74,17 +178,7 @@ def run(transmittals, auto_encode_cf4=False):
 
                 # ── Search patient ─────────────────────────────────────────
                 # ── Search transmittal ─────────────────────────────────────
-                search_box = page.locator('input[type="text"]').first
-                search_box.click()
-                search_box.press("Control+A")
-                search_box.press("Backspace")
-                search_box.fill(transmittal_no)
-                search_box.press("Enter")
-                page.wait_for_load_state("networkidle")
-
-                page.wait_for_timeout(2000)
-
-                if page.locator("tbody tr").count() == 0:
+                if not _search_transmittal(page, transmittal_no):
                     logger.warning(f"TRANSMITTAL NOT FOUND: {transmittal_no}")
                     report.skipped(
                         transmittal=transmittal_no,
@@ -98,22 +192,22 @@ def run(transmittals, auto_encode_cf4=False):
                 first_row = page.locator("tbody tr").first
                 logger.info("Row found.")
                 first_row.locator("button").last.click()
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
 
                 logger.info("Clicking Manage Claims...")
                 page.get_by_text("Manage Claims", exact=True).click()
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
                 logger.success("SUCCESS: Manage Claims opened")
 
                 # ── Open claim → Manage ────────────────────────────────────
                 logger.info("Opening claim row menu...")
                 claim_row = page.locator("tbody tr").first
                 claim_row.locator("button").last.click()
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
 
                 logger.info("Clicking Manage...")
                 page.get_by_text("Manage", exact=True).click()
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
                 logger.success("SUCCESS: PHIC Claim Details opened")
 
                 # --------------------------------------------------
@@ -124,7 +218,7 @@ def run(transmittals, auto_encode_cf4=False):
                 if validate_btn.count() > 0:
                     print("Clicking Validate Eligibility...")
                     validate_btn.first.click()
-                    page.wait_for_load_state("networkidle")
+                    _safe_networkidle(page)
                 else:
                     print("No validation required — skipping.")
 
@@ -132,7 +226,7 @@ def run(transmittals, auto_encode_cf4=False):
                 logger.info("Opening CF2 tab...")
                 page.get_by_text("CF2", exact=True).click()
 
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
 
                 page.wait_for_selector(
                     "input[id*='sessionDate-DateMM-DD-YYYY']",
@@ -163,7 +257,7 @@ def run(transmittals, auto_encode_cf4=False):
                 # ── Move to CF4 ────────────────────────────────────────────
                 logger.info("Opening CF4 tab...")
                 page.get_by_text("CF4", exact=True).click()
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
 
                 logger.info("Clicking MOVE TO CF4...")
                 page.get_by_role("button", name="MOVE TO CF4").click()
@@ -171,7 +265,7 @@ def run(transmittals, auto_encode_cf4=False):
                 logger.info("Waiting for confirmation dialog...")
                 page.wait_for_selector("text=Proceed", timeout=10000)
                 page.locator("text=Proceed").first.click(force=True)
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
                 logger.success("SUCCESS: Moved to CF4")
 
                 # ── Auto Encode CF4 (test) ──────────────────────────────────
@@ -266,7 +360,7 @@ def run(transmittals, auto_encode_cf4=False):
                                 logger.warning("Force click failed. Trying JavaScript click...")
                                 course_btn.evaluate("el => el.click()")
 
-                        page.wait_for_load_state("networkidle")
+                        _safe_networkidle(page)
 
                     _try_step(
                         "Opened COURSE IN THE WARD",
@@ -290,7 +384,7 @@ def run(transmittals, auto_encode_cf4=False):
                                 logger.warning("Force click failed. Trying JavaScript click...")
                                 add_btn.evaluate("el => el.click()")
 
-                        page.wait_for_load_state("networkidle")
+                        _safe_networkidle(page)
                     
                     _try_step(
                         "Clicked ADD",
@@ -325,7 +419,7 @@ def run(transmittals, auto_encode_cf4=False):
                         save_btn = page.locator("button:has-text('SAVE')").last
                         save_btn.click(force=True)
 
-                        page.wait_for_load_state("networkidle")
+                        _safe_networkidle(page)
 
                         logger.success(f"Saved Course in the Ward entry for {session_date}")
 
@@ -350,7 +444,7 @@ def run(transmittals, auto_encode_cf4=False):
                                 logger.warning("Force click failed. Trying JavaScript click...")
                                 close_btn.evaluate("el => el.click()")
 
-                        page.wait_for_load_state("networkidle")
+                        _safe_networkidle(page)
 
 
                     _try_step(
@@ -363,7 +457,7 @@ def run(transmittals, auto_encode_cf4=False):
                 # ── Map medicines ──────────────────────────────────────────
                 logger.info("Clicking DRUGS / MEDICINES...")
                 page.get_by_text("DRUGS / MEDICINES", exact=True).click()
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
 
                 rows = page.locator("tbody tr")
 
@@ -420,13 +514,11 @@ def run(transmittals, auto_encode_cf4=False):
                         logger.warning("Unknown medicine, skipping row...")
                         continue
 
-                    logger.info(f"Textbox value: {search_box.input_value()}")
-
                     # Open 3-dot menu → Map Medicine
                     row.locator("button").click()
                     page.wait_for_timeout(1000)
                     page.get_by_text("Map Medicine", exact=True).click()
-                    page.wait_for_load_state("networkidle")
+                    _safe_networkidle(page)
 
                     # Type search term
                     search_box = page.locator('input[id*="SearchMedicinetoMap"]').first
@@ -499,7 +591,7 @@ def run(transmittals, auto_encode_cf4=False):
 
                     continue_btn = page.get_by_role("button", name="CONTINUE")
                     continue_btn.click(force=True)
-                    page.wait_for_load_state("networkidle")
+                    _safe_networkidle(page)
                     logger.info("Medicine mapped")
 
                 logger.success("All medicines mapped")
@@ -521,7 +613,7 @@ def run(transmittals, auto_encode_cf4=False):
 
                 logger.info("Navigation save confirmation clicked")
 
-                page.wait_for_load_state("networkidle")
+                _safe_networkidle(page)
 
                 logger.success(f"SUCCESS: Patient {transmittal_no} saved")
                 report.success(
