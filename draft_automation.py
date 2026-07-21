@@ -32,7 +32,15 @@ def run_create_draft_flow(page, member_pin, admission_date, discharge_date, draf
     # so we can branch the Add Claims flow.
     raw_pin = member_pin.strip()
     is_dependent = raw_pin.endswith("/") or raw_pin.endswith("\\")
-    member_pin = raw_pin[:-1].strip() if is_dependent else raw_pin
+    raw_pin = raw_pin[:-1].strip() if is_dependent else raw_pin
+
+    # Excel entries can carry characters that aren't part of the actual
+    # PIN — a leading apostrophe (Excel's "force text" marker, e.g.
+    # '0190894931403), stray spaces, dashes, etc. Beacon's PIN field
+    # rejects anything but digits, so strip everything else here. This
+    # keeps leading zeros intact (e.g. 0190894931403) since only
+    # non-digit characters are removed.
+    member_pin = re.sub(r"\D", "", raw_pin)
 
     print(
         f"Automate Draft requested — Member PIN: {member_pin}, "
