@@ -48,13 +48,32 @@ html, body {
    edge alongside a plain CSS border. Slight rounding softens the corners
    further. */
 .app-window {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
-  box-shadow: inset 0 0 0 1px var(--accent);
-  border-radius: 6px;
   overflow: hidden;
   box-sizing: border-box;
+}
+
+/* The accent glow is drawn on a separate absolutely-positioned overlay
+   rather than directly on .app-window, so a solid box-shadow/border
+   isn't sharing paint duties with anything else that clips children. */
+.app-window::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 1px var(--accent);
+  pointer-events: none;
+}
+
+/* Suppresses the accent glow border for windows that shouldn't show it
+   (e.g. the main dashboard, which matches ui.py's plain/borderless root).
+   Use this class instead of an inline `style="border: none"` — the glow
+   is drawn with box-shadow, not the border property, so a plain
+   `border: none` override has no effect on it. */
+.app-window.no-glow::after {
+  box-shadow: none;
 }
 
 /* ---------- Custom title bar (replaces the native OS frame,
