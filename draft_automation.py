@@ -16,6 +16,140 @@ import re
 from playwright.sync_api import expect
 
 from beacon import open_transmittals
+from playwright.sync_api import TimeoutError
+
+
+
+def click_newest_transmittal_menu(page):
+    """
+    Clicks the 3-dot action menu of the newest transmittal (first row).
+
+    Uses several fallback strategies because Beacon's DOM is unstable.
+    Raises Exception if all methods fail.
+    """
+
+    print("Waiting for newest transmittal row...")
+
+    page.wait_for_selector("tbody tr", timeout=30000)
+
+    first_row = page.locator("tbody tr").first
+
+    first_row.wait_for(state="visible", timeout=30000)
+
+    strategies = [
+
+        # ------------------------------------------------------------------
+        # Strategy 1 (BEST)
+        # First row -> last cell -> button
+        # ------------------------------------------------------------------
+        lambda: first_row.locator("td").last.locator("button").click(
+            timeout=5000,
+            force=True
+        ),
+
+        # ------------------------------------------------------------------
+        # Strategy 2
+        # First row -> any button
+        # ------------------------------------------------------------------
+        lambda: first_row.locator("button").first.click(
+            timeout=5000,
+            force=True
+        ),
+
+        # ------------------------------------------------------------------
+        # Strategy 3
+        # First row -> SVG
+        # ------------------------------------------------------------------
+        lambda: first_row.locator("svg").first.click(
+            timeout=5000,
+            force=True
+        ),
+
+        # ------------------------------------------------------------------
+        # Strategy 4
+        # First row -> SVG Path
+        # ------------------------------------------------------------------
+        lambda: first_row.locator("path").first.click(
+            timeout=5000,
+            force=True
+        ),
+
+        # ------------------------------------------------------------------
+        # Strategy 5
+        # Relative CSS
+        # ------------------------------------------------------------------
+        lambda: page.locator(
+            "tbody tr:first-child td:last-child button"
+        ).click(
+            timeout=5000,
+            force=True
+        ),
+
+        # ------------------------------------------------------------------
+        # Strategy 6
+        # Mouse click at center of last cell
+        # ------------------------------------------------------------------
+        lambda: (
+            first_row.locator("td").last.scroll_into_view_if_needed(),
+            first_row.locator("td").last.click(
+                position={"x": 24, "y": 24},
+                timeout=5000,
+                force=True
+            )
+        ),
+
+        # ------------------------------------------------------------------
+        # Strategy 7
+        # JavaScript click
+        # ------------------------------------------------------------------
+        lambda: page.evaluate("""
+            () => {
+                const row = document.querySelector("tbody tr");
+                if(!row) throw "No row";
+
+                const btn = row.querySelector("td:last-child button");
+                if(!btn) throw "No button";
+
+                btn.click();
+            }
+        """),
+
+        # ------------------------------------------------------------------
+        # Strategy 8
+        # Dispatch MouseEvent
+        # ------------------------------------------------------------------
+        lambda: page.evaluate("""
+            () => {
+                const row = document.querySelector("tbody tr");
+                if(!row) throw "No row";
+
+                const btn = row.querySelector("button");
+
+                btn.dispatchEvent(
+                    new MouseEvent("click", {
+                        bubbles:true,
+                        cancelable:true
+                    })
+                );
+            }
+        """),
+    ]
+
+    for i, strategy in enumerate(strategies, start=1):
+        try:
+            print(f"Trying menu strategy #{i}...")
+            strategy()
+
+            page.wait_for_timeout(500)
+
+            if page.get_by_text("Manage Claims").is_visible(timeout=1500):
+                print(f"SUCCESS using strategy #{i}")
+                return
+
+        except Exception as e:
+            print(f"Strategy #{i} failed: {e}")
+
+    raise Exception("Unable to open newest transmittal menu.")
 
 
 def run_create_draft_flow(page, member_pin, admission_date, discharge_date, draft_title):
@@ -77,16 +211,16 @@ def run_create_draft_flow(page, member_pin, admission_date, discharge_date, draf
     page.get_by_role("button", name="Save").click()
     page.wait_for_load_state("networkidle")
 
-    page.get_by_role("button").filter(
-        has_text=re.compile(r"^$")
-    ).nth(3).click()
+    page.wait_for_load_state("networkidle")
+
+    click_newest_transmittal_menu(page)
 
     page.get_by_text("Manage Claims").click()
 
-    # Open Actions menu
-    page.get_by_role("button").filter(
-        has_text=re.compile(r"^$")
-    ).nth(2).click()
+
+    page.locator(
+        'button:has(path[d^="M19 13h-6"])'
+    ).click(force=True)
 
     if is_dependent:
         print("Opening Add Claims for Dependent...")
