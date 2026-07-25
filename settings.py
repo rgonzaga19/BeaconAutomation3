@@ -19,7 +19,8 @@ def load_settings():
         default = {
             "username": "",
             "password": "",
-            "access_key": ""
+            "access_key": "",
+            "server": "s4"
         }
 
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -28,7 +29,13 @@ def load_settings():
         return default
 
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        settings = json.load(f)
+
+    # Older config.json files predate the S2/S4 toggle and won't have this
+    # key. Default them to "s4" to match the previously hardcoded URL.
+    settings.setdefault("server", "s4")
+
+    return settings
 
 
 def save_settings(settings):

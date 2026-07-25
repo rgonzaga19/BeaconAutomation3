@@ -13,6 +13,31 @@ const passwordInput = document.getElementById("password");
 const accessKeyInput = document.getElementById("accessKey");
 
 // ---------------------------------------------------------------------------
+// Beacon server toggle (S2 / S4)
+// ---------------------------------------------------------------------------
+const toggleTrack = document.getElementById("toggleTrack");
+const labelS2 = document.getElementById("labelS2");
+const labelS4 = document.getElementById("labelS4");
+
+let currentServer = "s4"; // fallback until settings load; s4 matches the previous hardcoded default
+
+function setServerUI(value) {
+  currentServer = value === "s2" ? "s2" : "s4";
+  const isS4 = currentServer === "s4";
+  toggleTrack.classList.toggle("on", isS4);
+  labelS4.classList.toggle("active", isS4);
+  labelS2.classList.toggle("active", !isS4);
+}
+
+function toggleServer() {
+  setServerUI(currentServer === "s4" ? "s2" : "s4");
+}
+
+toggleTrack.addEventListener("click", toggleServer);
+labelS2.addEventListener("click", () => setServerUI("s2"));
+labelS4.addEventListener("click", () => setServerUI("s4"));
+
+// ---------------------------------------------------------------------------
 // Load current settings into the form
 // ---------------------------------------------------------------------------
 (async function loadCurrentSettings() {
@@ -20,6 +45,7 @@ const accessKeyInput = document.getElementById("accessKey");
   usernameInput.value = settings.username || "";
   passwordInput.value = settings.password || "";
   accessKeyInput.value = settings.access_key || "";
+  setServerUI(settings.server || "s4");
 })();
 
 // ---------------------------------------------------------------------------
@@ -63,6 +89,7 @@ saveBtn.addEventListener("click", async () => {
       username,
       password,
       access_key: accessKey,
+      server: currentServer,
     }),
   });
 

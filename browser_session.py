@@ -16,6 +16,19 @@ APP_DATA.mkdir(parents=True, exist_ok=True)
 
 SESSION_FILE = APP_DATA / "session.json"
 
+BEACON_URLS = {
+    "s2": "https://beacon-s2.bizbox.ph/",
+    "s4": "https://beacon-s4.bizbox.ph/",
+}
+
+
+def _get_beacon_url():
+    """Resolve the Beacon URL from the user's S2/S4 toggle in Settings,
+    falling back to S4 (the previous hardcoded default) if unset/unknown."""
+    settings = load_settings()
+    server = settings.get("server", "s4")
+    return BEACON_URLS.get(server, BEACON_URLS["s4"])
+
 
 playwright = None
 browser = None
@@ -34,7 +47,7 @@ def _perform_login(username, password):
     global page
 
     page.goto(
-        "https://beacon-s4.bizbox.ph/",
+        _get_beacon_url(),
         wait_until="networkidle"
     )
 
@@ -156,7 +169,7 @@ def connect():
     else:
 
         page.goto(
-            "https://beacon-s4.bizbox.ph/",
+            _get_beacon_url(),
             wait_until="networkidle"
         )
 
