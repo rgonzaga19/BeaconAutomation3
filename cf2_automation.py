@@ -640,7 +640,34 @@ class CF2Automation:
             lambda: page.get_by_text("Autofill Doctor Information", exact=True).click(),
             critical=True,
         )
-        page.wait_for_timeout(1500)
+
+        # ------------------------------------------------------------------
+        # Wait until Beacon finishes autofilling the doctor.
+        # The Lastname field is initially empty, so wait until it has a value.
+        # ------------------------------------------------------------------
+        doctor_lastname = page.locator("#aTesting-doctorLastname")
+        doctor_lastname.wait_for(state="visible", timeout=30000)
+
+        # Wait until the lastname field is populated.
+        doctor_lastname.wait_for(
+            state="attached",
+            timeout=30000,
+        )
+
+        page.wait_for_function(
+            """
+            () => {
+                const el = document.querySelector("#aTesting-doctorLastname");
+                return el && el.value.trim().length > 0;
+            }
+            """,
+            timeout=30000,
+        )
+
+        print("✓ Doctor information loaded.")
+
+        # Give Beacon time to finish processing after the UI is filled
+        page.wait_for_timeout(1000)
 
         date_str = data.last_treatment.strftime("%m%d%Y")
         expected_display = data.last_treatment.strftime("%m-%d-%Y")
@@ -670,8 +697,6 @@ class CF2Automation:
                 )
                 page.wait_for_timeout(300)
 
-            # Still wrong after all retries — log it and let the caller continue
-            # rather than sinking the whole patient over a cosmetic date field.
             print(
                 f"  WARNING: Doctor Sign Date could not be verified after "
                 f"{max_attempts} attempts (last value: '{actual_value}', "
@@ -689,6 +714,7 @@ class CF2Automation:
             page.get_by_role("button", name="Save and Create New").click()
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(1000)
+
             page.get_by_role("button", name="Close").click()
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(1000)
