@@ -23,7 +23,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 
 OutputDir=Output
-OutputBaseFilename=Beabots_Setup_v3.0.0
+OutputBaseFilename=Beabots_Setup_v{#MyAppVersion}
 
 Compression=lzma
 SolidCompression=yes

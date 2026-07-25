@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';"
+/>
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>About Beabots</title>
+
+<link rel="stylesheet" href="css/about.css">
+
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>BEABOTS</h1>
+
+    <div class="version" id="version">
+        Version ...
+    </div>
+
+    <!-- ================= License ================= -->
+
+    <div class="section">
+
+        <h2>License Information</h2>
+
+        <div class="label">Licensed To</div>
+        <div class="value" id="owner">Loading...</div>
+
+        <div class="label">Plan</div>
+        <div class="value" id="plan">Loading...</div>
+
+        <div class="label">License Expires</div>
+        <div class="value" id="expires">Loading...</div>
+
+    </div>
+
+    <!-- ================= Update ================= -->
+
+    <div class="section">
+
+        <h2>Application Updates</h2>
+
+        <div class="label">Latest Version</div>
+        <div class="value" id="latestVersion">
+            Checking...
+        </div>
+
+        <div class="label">
+            Release Notes
+        </div>
+
+        <ul id="releaseNotes" class="release-notes">
+        </ul>
+
+    </div>
+
+    <!-- ================= Buttons ================= -->
+
+    <div class="buttons">
+
+        <button id="btnDownload">
+            Download Update
+        </button>
+
+        <button id="btnClose">
+            Close
+        </button>
+
+    </div>
+
+</div>
+
+<script src="js/about.js"></script>
+
+</body>
+</html>

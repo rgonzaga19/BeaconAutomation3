@@ -13,7 +13,7 @@
  *      renderer never gets raw file access, only resolved paths.
  */
 
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -30,6 +30,7 @@ const windows = {
   cf2: null,
   uploadSoa: null,
   settings: null,
+  about: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -171,6 +172,16 @@ function createSettingsWindow() {
   });
 }
 
+function createAboutWindow() {
+  return createWindow("about", "about.html", {
+    width: 700,
+    height: 620,
+    minWidth: 700,
+    minHeight: 620,
+    resizable: false,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // IPC — window chrome
 // ---------------------------------------------------------------------------
@@ -217,6 +228,49 @@ ipcMain.handle("open:uploadSoaWindow", () => {
 ipcMain.handle("open:settingsWindow", () => {
   createSettingsWindow();
 });
+
+ipcMain.handle("open:aboutWindow", () => {
+  createAboutWindow();
+});
+
+// ---------------------------------------------------------------------------
+// IPC — App Information
+// ---------------------------------------------------------------------------
+
+ipcMain.handle("app:getVersion", () => {
+  return app.getVersion();
+});
+
+ipcMain.handle("app:getSettings", async () => {
+
+  const response = await fetch(`${API_BASE}/api/settings`);
+
+  if (!response.ok) {
+    throw new Error("Unable to load settings.");
+  }
+
+  return await response.json();
+
+});
+
+ipcMain.handle("app:checkForUpdates", async () => {
+
+  const response = await fetch(
+    "https://beabot-license.gonzagaromel19.workers.dev/update"
+  );
+
+  if (!response.ok) {
+    throw new Error("Unable to contact update server.");
+  }
+
+  return await response.json();
+
+});
+
+ipcMain.handle("app:openExternal", async (_event, url) => {
+  await shell.openExternal(url);
+});
+
 
 // ---------------------------------------------------------------------------
 // IPC — native dialogs (replace filedialog.askopenfilename /

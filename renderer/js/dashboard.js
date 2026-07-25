@@ -43,16 +43,23 @@ document.getElementById("btnUploadSoa").addEventListener("click", () => {
 document.getElementById("btnSettings").addEventListener("click", () => {
   window.beabots?.openSettingsWindow();
 });
-document.getElementById("btnAbout").addEventListener("click", showAboutModal);
+document.getElementById("btnAbout").addEventListener("click", () => {
+    window.beabots.openAboutWindow();
+});
 
 // ---------------------------------------------------------------------------
 // About modal (dashboard-specific — uses the shared showModal from common.js)
 // ---------------------------------------------------------------------------
+
+
+
 async function showAboutModal() {
   const settings = await fetchJSON("/api/settings");
+  const version = await window.beabots.getVersion();
+
   const body =
 `Beabots
-Version 3.0
+Version ${version}
 
 Automates the mapping of medicines.
 Automates the data encoding in CF2/CF4.
@@ -72,7 +79,7 @@ GitHub: https://github.com/rgonzaga19`;
 }
 
 // ---------------------------------------------------------------------------
-// Transmittal textarea + count label (same logic as ui.py's _update_count)
+// Transmittal textarea + count label 
 // ---------------------------------------------------------------------------
 const transmittalsInput = document.getElementById("transmittalsInput");
 const countLabel = document.getElementById("countLabel");
@@ -150,6 +157,8 @@ function showReport(results) {
 // ---------------------------------------------------------------------------
 const statusDot = document.getElementById("statusDot");
 const statusLabel = document.getElementById("statusLabel");
+const appVersionLabel = document.getElementById("appVersion");
+const updateStatusLabel = document.getElementById("updateStatus");
 const progressFill = document.getElementById("progressFill");
 const startBtn = document.getElementById("startBtn");
 const btnSettings = document.getElementById("btnSettings");
@@ -229,5 +238,41 @@ socket.on("beacon_done", (data) => {
 });
 
 // Initial state
+async function checkForUpdates() {
+
+  const currentVersion = await window.beabots.getVersion();
+
+  appVersionLabel.textContent = `v${currentVersion}`;
+
+  updateStatusLabel.textContent = "Checking...";
+  updateStatusLabel.className = "version checking";
+
+  try {
+
+    const latest = await window.beabots.checkForUpdates();
+
+    if (latest.version !== currentVersion) {
+
+      updateStatusLabel.textContent = "⬇ Update Available";
+      updateStatusLabel.className = "version update-available";
+
+    } else {
+
+      updateStatusLabel.textContent = "✓ Up To Date";
+      updateStatusLabel.className = "version up-to-date";
+
+    }
+
+  } catch {
+
+    updateStatusLabel.textContent = "⚠ Offline";
+    updateStatusLabel.className = "version offline";
+
+  }
+
+}
+
 updateCount();
 setStatus("IDLE", "");
+
+checkForUpdates();

@@ -21,6 +21,9 @@
     font-size: 11px;
     margin-left: 2px;
   }
+  #updateStatus {
+    margin-left: 15px;
+  }
   .header .status-group {
     margin-left: auto;
     display: flex;
@@ -87,7 +90,8 @@
 
     <div class="header">
       <span class="brand">BEABOTS</span>
-      <span class="version">v3.0</span>
+      <span class="version" id="appVersion">v...</span>
+      <span class="version" id="updateStatus"></span>
       <div class="status-group">
         <span class="status-label" id="statusLabel">IDLE</span>
         <span class="status-dot" id="statusDot"></span>

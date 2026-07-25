@@ -20,6 +20,12 @@ contextBridge.exposeInMainWorld("beabots", {
   openCf2Window: () => ipcRenderer.invoke("open:cf2Window"),
   openUploadSoaWindow: () => ipcRenderer.invoke("open:uploadSoaWindow"),
   openSettingsWindow: () => ipcRenderer.invoke("open:settingsWindow"),
+  openAboutWindow: () => ipcRenderer.invoke("open:aboutWindow"),
+
+  getVersion: () => ipcRenderer.invoke("app:getVersion"),
+  getSettings: () => ipcRenderer.invoke("app:getSettings"),
+  checkForUpdates: () => ipcRenderer.invoke("app:checkForUpdates"),
+  openExternal: (url) => ipcRenderer.invoke("app:openExternal", url),
 
   // Native dialogs
   selectExcelFile: () => ipcRenderer.invoke("dialog:selectExcelFile"),
