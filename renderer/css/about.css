@@ -1,94 +1,179 @@
-:root{
-    --bg:#0a0f1d;
-    --panel:#18233f;
-    --border:#00bfff;
-    --text:#ffffff;
-    --muted:#9bb6ff;
+/* ============================================================
+   About window — layout specific to about.html.
+   Colors, fonts, .app-window/.titlebar/.panel/.cyber-btn/.solid-btn/
+   .section-label all come from the shared theme.css so this window
+   matches the rest of the Beabots suite (dashboard, CF2, Upload SOA).
+   ============================================================ */
+
+.about-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px 0 24px;
 }
 
-*{
-    box-sizing:border-box;
-    margin:0;
-    padding:0;
+/* ---------- Brand header ---------- */
+.brand-row {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
 }
 
-body{
-    background:var(--bg);
-    color:var(--text);
-    font-family:Consolas, monospace;
-    padding:28px;
+.brand-name {
+    color: var(--text-pri);
+    font-size: 28px;
+    font-weight: bold;
+    letter-spacing: 1px;
 }
 
-h1{
-    color:white;
-    font-size:42px;
-    margin-bottom:6px;
+.version {
+    color: var(--text-sec);
+    font-size: 13px;
 }
 
-.version{
-    color:var(--muted);
-    margin-bottom:30px;
+/* ---------- Panels ---------- */
+.card-panel {
+    margin-bottom: 18px;
+    padding-bottom: 14px;
 }
 
-.section{
-    margin-top:22px;
+.card-panel .section-label {
+    padding: 12px 14px 10px 14px;
 }
 
-.label{
-    color:var(--muted);
-    font-size:14px;
-    margin-bottom:6px;
+/* ---------- Info rows (label left, value right) ---------- */
+.info-grid {
+    padding: 0 14px;
 }
 
-.value{
-    font-size:22px;
-    font-weight:bold;
-    margin-bottom:20px;
+.info-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--glow-cyan);
 }
 
-.release-notes{
-    margin-top:10px;
-    margin-left:22px;
+.info-row:last-child {
+    border-bottom: none;
 }
 
-.release-notes li{
-    margin-bottom:8px;
+.info-row .label {
+    color: var(--text-sec);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
 }
 
-.buttons{
-    margin-top:35px;
-    display:flex;
-    gap:12px;
+.info-row .value {
+    color: var(--text-pri);
+    font-size: 14px;
+    font-weight: bold;
+    text-align: right;
 }
 
-button{
-    background:transparent;
-    color:var(--border);
-    border:1px solid var(--border);
-    padding:10px 22px;
-    cursor:pointer;
-    font-family:inherit;
-    font-weight:bold;
+/* Latest-version row sits outside .info-grid (its own label/value pair) */
+.card-panel > .info-row {
+    padding: 0 14px 8px 14px;
+    border-bottom: none;
 }
 
-button:hover{
-    background:rgba(0,191,255,.12);
-}
-h2{
-    color: var(--border);
-    font-size: 18px;
-    margin-bottom: 16px;
-}
-
-.release-notes{
-    margin-top: 10px;
-    margin-left: 22px;
+.card-panel .label {
+    color: var(--text-sec);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 0 14px;
 }
 
-.release-notes li{
-    margin-bottom: 8px;
+/* ---------- Update status badge ---------- */
+.update-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 14px 14px 14px;
+    padding: 6px 12px;
+    width: fit-content;
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 0.3px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
 }
 
-#btnDownload{
+.update-status::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-sec);
+    flex-shrink: 0;
+}
+
+.update-status.success {
+    color: var(--success);
+    border-color: var(--success);
+}
+
+.update-status.success::before {
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+}
+
+.update-status.update {
+    color: var(--warning);
+    border-color: var(--warning);
+}
+
+.update-status.update::before {
+    background: var(--warning);
+    box-shadow: 0 0 6px var(--warning);
+}
+
+/* ---------- Release notes list ---------- */
+.update-notes {
+    list-style: none;
+    margin: 8px 14px 12px 14px;
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    max-height: 140px;
+    overflow-y: auto;
+}
+
+.update-notes li {
+    color: var(--text-pri);
+    font-size: 13px;
+    line-height: 1.6;
+    padding-left: 14px;
+    position: relative;
+}
+
+.update-notes li::before {
+    content: "›";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: bold;
+}
+
+.update-notes li:not(:last-child) {
+    margin-bottom: 4px;
+}
+
+/* ---------- Bottom action bar ---------- */
+.buttons {
+    display: flex;
+    gap: 12px;
+    padding: 14px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-panel);
+}
+
+#btnDownload {
     margin-right: auto;
 }

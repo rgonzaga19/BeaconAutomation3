@@ -4,10 +4,13 @@ const planEl = document.getElementById("plan");
 const expiresEl = document.getElementById("expires");
 
 const latestVersionEl = document.getElementById("latestVersion");
+const updateStatusEl = document.getElementById("updateStatus");
 const releaseNotesEl = document.getElementById("releaseNotes");
+
 
 const btnDownload = document.getElementById("btnDownload");
 const btnClose = document.getElementById("btnClose");
+const btnTitlebarClose = document.getElementById("btnTitlebarClose");
 
 async function loadAbout() {
 
@@ -38,6 +41,31 @@ async function loadAbout() {
 
     latestVersionEl.textContent = update.version;
 
+    const currentVersion = version.trim();
+    const latestVersion = update.version.trim();
+
+    if (currentVersion === latestVersion) {
+
+        updateStatusEl.textContent = "✔ You're using the latest version";
+        updateStatusEl.className = "update-status success";
+
+        btnDownload.disabled = true;
+        btnDownload.textContent = "Up To Date";
+
+    } else {
+
+        updateStatusEl.textContent = "▲ Update Available";
+        updateStatusEl.className = "update-status update";
+
+        btnDownload.disabled = false;
+        btnDownload.textContent = "Download Update";
+
+        btnDownload.onclick = () => {
+            window.beabots.openExternal(update.download);
+        };
+
+    }
+
     releaseNotesEl.innerHTML = "";
 
     for (const note of update.notes) {
@@ -48,13 +76,13 @@ async function loadAbout() {
 
     }
 
-    btnDownload.onclick = () => {
-        window.beabots.openExternal(update.download);
-    };  
-
 }
 
 btnClose.addEventListener("click", () => {
+    window.close();
+});
+
+btnTitlebarClose.addEventListener("click", () => {
     window.close();
 });
 
