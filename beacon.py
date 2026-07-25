@@ -68,6 +68,42 @@ def _safe_networkidle(page, timeout=15000):
         logger.warning("networkidle wait timed out — continuing anyway")
 
 
+def _wait_for_save_changes_complete(page, dialog_timeout=15000, settle_buffer=1500):
+    """After clicking Beacon's SAVE CHANGES confirmation (the workaround we
+    use in place of the hard-to-target CF4 Fab), don't assume the save
+    landed just because the click succeeded — the click can fire off the
+    save request AND start navigating away in the same breath, and
+    `_safe_networkidle` alone isn't a reliable enough signal (it can time
+    out on its own due to Beacon's background polling, per its docstring,
+    regardless of whether the save actually finished).
+
+    Primary signal: wait for the SAVE CHANGES dialog/text to actually
+    disappear — Beacon dismisses it once the save call resolves.
+
+    Fallback: if it doesn't disappear within `dialog_timeout` (dialog
+    never rendered the way expected, or got swapped out already), fall
+    back to a fixed settle buffer so we still give the in-flight request
+    time to land before the caller navigates again.
+
+    Either way, add a small extra buffer afterward — the dialog can
+    visually dismiss slightly before the backend write actually commits.
+    """
+    try:
+        page.wait_for_selector(
+            "text=SAVE CHANGES",
+            state="hidden",
+            timeout=dialog_timeout
+        )
+        logger.info("SAVE CHANGES dialog dismissed — save confirmed")
+    except PlaywrightTimeoutError:
+        logger.warning(
+            "SAVE CHANGES dialog didn't disappear within "
+            f"{dialog_timeout}ms — falling back to a fixed settle buffer"
+        )
+
+    page.wait_for_timeout(settle_buffer)
+
+
 def _search_transmittal(page, transmittal_no, attempts=3):
     """Type the transmittal number into the search box and confirm the
     table actually refreshed before deciding it was found or not found.
@@ -608,11 +644,17 @@ def run(transmittals, auto_encode_cf4=False):
 
                 page.get_by_role(
                     "button",
-                    name="SAVE CHANGES"
+                    name="SAVE CHANGES",
+                    exact=True
                 ).click()
 
                 logger.info("Navigation save confirmation clicked")
 
+                # Don't trust networkidle alone here — wait for the dialog
+                # to actually resolve (with a fallback settle buffer) before
+                # doing anything else, so the follow-up navigation below
+                # can't cut off an in-flight save.
+                _wait_for_save_changes_complete(page)
                 _safe_networkidle(page)
 
                 logger.success(f"SUCCESS: Patient {transmittal_no} saved")
