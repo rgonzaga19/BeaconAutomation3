@@ -32,12 +32,15 @@ SURNAME_PARTICLES = {
 # Generational suffixes that show up as their own token right after the
 # surname (e.g. "JUAN DELA CRUZ JR", "JUAN DELA CRUZ III."). Compared with
 # any trailing period stripped, so both "JR" and "JR." match.
-NAME_SUFFIXES = {"JR", "SR", "II", "III", "IV"}
+NAME_SUFFIXES = {
+    "JR", "SR",
+    "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+}
 
 
 def _strip_name_suffixes(tokens):
     """
-    Removes generational suffix tokens like "JR"/"SR"/"II"/"III"/"IV"
+    Removes generational suffix tokens like "JR"/"SR"/"II" through "X"
     (with or without a trailing period, e.g. "JR." or "III.") from a
     list of name tokens before surname/given splitting runs.
 
@@ -370,48 +373,58 @@ class SOAAutomation:
                 )
                 matches = _matching(bare_surname_key)
 
-            # 3) Last resort: no surname match at all — search by given name.
-            if not matches:
-                logger.warning(
-                    f"No surname match for '{' '.join(surname_tokens)}' — "
-                    "falling back to first-name search"
-                )
-                matches = _matching(given_key)
-                if not matches and given_initial:
-                    matches = _matching(given_initial)
-
+            # No exact surname match at all (full or bare) — do NOT fall back
+            # to searching by given name alone, since a given-name-only match
+            # says nothing about whether it's the right person's surname.
+            # It's better to skip the transmittal than upload the wrong file.
             if not matches:
                 raise Exception(
-                    f"No SOA file found for patient '{self.patient_name}' "
-                    f"inside {self.soa_folder}"
+                    f"No SOA file found for patient '{self.patient_name}': "
+                    f"no filename matched surname '{' '.join(surname_tokens)}' "
+                    f"(or bare surname '{bare_surname_key}') "
+                    f"inside {self.soa_folder}. Skipping — will not guess."
                 )
 
             # If several files share the same surname (e.g. two patients with
-            # the same last name), narrow down using the given name.
+            # the same last name), narrow down using the given name / initial.
+            # If narrowing doesn't land on exactly one file, stop and raise —
+            # do not fall back to "most recent" or any other closest-match
+            # guess, since that risks uploading the wrong patient's SOA.
             if len(matches) > 1:
                 narrowed = [
                     f for f in matches
                     if _has_given_name_marker(_normalize(f.name))
                 ]
 
-                if narrowed:
-                    logger.info(
-                        f"Multiple files matched surname "
-                        f"'{' '.join(surname_tokens)}' — narrowed to "
-                        f"{len(narrowed)} using given name"
+                if not narrowed:
+                    raise Exception(
+                        f"Multiple SOA files matched surname "
+                        f"'{' '.join(surname_tokens)}' "
+                        f"({[f.name for f in matches]}) but none could be "
+                        f"confirmed against given name '{' '.join(given_tokens)}'. "
+                        "Skipping — will not guess which file belongs to "
+                        "this patient."
                     )
-                    matches = narrowed
-                else:
-                    logger.warning(
-                        f"Multiple files matched surname "
-                        f"'{' '.join(surname_tokens)}' and none could be "
-                        "narrowed by given name — using most recent"
+
+                if len(narrowed) > 1:
+                    raise Exception(
+                        f"Multiple SOA files still match patient "
+                        f"'{self.patient_name}' after narrowing by given "
+                        f"name ({[f.name for f in narrowed]}). Skipping — "
+                        "will not guess which file is correct."
                     )
+
+                logger.info(
+                    f"Multiple files matched surname "
+                    f"'{' '.join(surname_tokens)}' — narrowed to a single "
+                    "exact match using given name"
+                )
+                matches = narrowed
 
             logger.info(f"Candidate SOA files: {[f.name for f in matches]}")
 
-            # Pick the newest matching file
-            soa_file = max(matches, key=lambda f: f.stat().st_mtime)
+            # Exactly one confirmed match at this point.
+            soa_file = matches[0]
 
             self.soa_file = str(soa_file)
 
