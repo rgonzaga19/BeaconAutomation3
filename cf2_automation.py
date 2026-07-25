@@ -10,6 +10,21 @@ from draft_automation import run_create_draft_flow, try_extract_transmittal_numb
 from draft_title import build_draft_title
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+# Guard against print() crashing an otherwise-successful patient run.
+# When this runs under a packaged .exe, stdout/stderr can be attached to a
+# legacy Windows console codepage (cp1252, cp437, etc.) instead of UTF-8.
+# Any print() containing a character outside that codepage (e.g. "✓", "—")
+# raises UnicodeEncodeError ('charmap' codec can't encode character ...),
+# which — since it's unhandled at the point of the print() call itself —
+# aborts the whole patient rather than just producing a garbled log line.
+# Setting errors="replace" keeps each stream's existing encoding but swaps
+# unencodable characters for a placeholder instead of raising.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 
 
@@ -296,7 +311,7 @@ class CF2Automation:
             validate_btn.first.click()
             page.wait_for_load_state("networkidle")
         else:
-            print("No validation required — skipping.")
+            print("No validation required - skipping.")
 
     def _fill_referral_and_accommodation(self, page):
         self._step(
@@ -664,7 +679,7 @@ class CF2Automation:
             timeout=30000,
         )
 
-        print("✓ Doctor information loaded.")
+        print("Doctor information loaded.")
 
         # Give Beacon time to finish processing after the UI is filled
         page.wait_for_timeout(1000)
@@ -693,7 +708,7 @@ class CF2Automation:
 
                 print(
                     f"  Attempt {attempt}: date field shows '{actual_value}', "
-                    f"expected '{expected_display}' — retrying..."
+                    f"expected '{expected_display}' - retrying..."
                 )
                 page.wait_for_timeout(300)
 
