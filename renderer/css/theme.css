@@ -108,6 +108,19 @@ html, body {
   font-weight: bold;
   padding: 0 4px 0 12px;
 }
+.titlebar .icon img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  display: block;
+}
+
+.page-header .glyph img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
+}
 
 .titlebar .title {
   color: var(--text-sec);

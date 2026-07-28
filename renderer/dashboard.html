@@ -30,6 +30,12 @@
     background: var(--bg-panel);
     font-size: 16px;
   }
+  .header .glyph img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
+  }
   .header .brand-block { line-height: 1.3; }
   .header .brand {
     color: var(--text-pri);
@@ -128,7 +134,7 @@
   <div class="app-window no-glow"> <!-- main dashboard keeps no outer accent border, matches ui.py's plain root -->
 
     <div class="titlebar">
-      <span class="icon">⚡</span>
+      <span class="icon"><img src="../bot.ico" alt=""></span>
       <span class="title">BEABOTS - BEACON AUTOMATION</span>
       <span class="spacer"></span>
       <div class="titlebar-btn" id="btnMinimize">─</div>
@@ -137,7 +143,7 @@
     </div>
 
     <div class="header">
-      <div class="glyph">⚡</div>
+      <div class="glyph"><img src="../bot.ico" alt=""></div>
       <div class="brand-block">
         <span class="brand">BEABOTS</span>
         <span class="version" id="appVersion">v...</span>
