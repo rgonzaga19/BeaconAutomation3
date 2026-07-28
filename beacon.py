@@ -303,6 +303,55 @@ def run(transmittals, auto_encode_cf4=False):
                 page.locator("text=Proceed").first.click(force=True)
                 _safe_networkidle(page)
                 logger.success("SUCCESS: Moved to CF4")
+                # REASON FOR ADMISSION - History of Present Illness / Pertinent Past Medical History ____________
+
+                # --------------------------------------------------
+                # REASON FOR ADMISSION
+                # Fill only empty fields with "N/A"
+                # --------------------------------------------------
+
+                def _fill_if_empty(locator, field_name):
+                    try:
+                        value = locator.input_value().strip()
+
+                        if not value:
+                            logger.info(f"{field_name} is empty. Filling with 'N/A'.")
+
+                            locator.click()
+                            locator.press("Control+A")
+                            locator.press("Backspace")
+                            locator.fill("N/A")
+                        else:
+                            logger.info(
+                                f"{field_name} already has value. Skipping."
+                            )
+
+                    except Exception as e:
+                        logger.warning(
+                            f"Unable to process {field_name}: {e}"
+                        )
+
+                history_locator = page.locator(
+                    'textarea[name="historyOfPresentIllness"]'
+                ).first
+
+                pertinent_locator = page.locator(
+                    'textarea[name="pertinentPastMedicalHistory"]'
+                ).first
+
+                _fill_if_empty(
+                    history_locator,
+                    "History of Present Illness"
+                )
+
+                _fill_if_empty(
+                    pertinent_locator,
+                    "Pertinent Past Medical History"
+                )
+
+
+
+
 
                 # ── Auto Encode CF4 (test) ──────────────────────────────────
                 if auto_encode_cf4:
