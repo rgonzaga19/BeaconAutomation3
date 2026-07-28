@@ -949,7 +949,7 @@ class CF2Automation:
             page = new_page_info.value
             page.wait_for_load_state("networkidle")
 
-        self._step(
+        cf2_tab_opened = self._step(
             "Opening Claim Form 2...",
             _open_claim_form_2,
             critical=True,
@@ -957,6 +957,14 @@ class CF2Automation:
 
         page.wait_for_timeout(500)
 
+        # ------------------------------------------------------------
+        # From here on, NOTHING is allowed to skip the SAVE click.
+        # Each field is filled in its own try/except so one bad field
+        # (missing element, timeout, stale reference, etc.) can't stop
+        # the others from being attempted, and — critically — can't
+        # stop us from reaching the SAVE button at the end. Whatever
+        # data did make it into the form still needs to be persisted.
+        # ------------------------------------------------------------
         def _fill_signature_over_printed_name():
             billing_clerk_name = self._get_billing_clerk_name()
 
@@ -976,14 +984,6 @@ class CF2Automation:
             signature_input.fill(billing_clerk_name)
             signature_input.press("Tab")
 
-        self._step(
-            "Filling Signature Over Printed Name of Authorized HCI Representative...",
-            _fill_signature_over_printed_name,
-            critical=True,
-        )
-
-        page.wait_for_timeout(300)
-
         def _fill_official_capacity_designation():
             designation = self._get_official_capacity_designation()
 
@@ -997,34 +997,89 @@ class CF2Automation:
             designation_input.fill(designation)
             designation_input.press("Tab")
 
-        self._step(
-            "Filling Official Capacity/Designation...",
-            _fill_official_capacity_designation,
-            critical=True,
-        )
-
-        page.wait_for_timeout(300)
-
-        self._step(
-            "Setting Part IV Date Signed...",
-            lambda: self._set_part_iv_date_signed(page, data.last_treatment),
-            critical=True,
-        )
-
-        page.wait_for_timeout(500)
-
         def _save_claim_form_2():
-            page.get_by_role(
-                "button",
-                name="SAVE",
-                exact=True
-            ).click()
+            """
+            Always-attempted fallback. Retries the click a few times and,
+            if Playwright's normal click still can't land it (e.g. an
+            overlay or animation is blocking actionability), falls back to
+            a raw JS click on the SAVE button so the click reaches the
+            page's SAVE handler no matter what happened earlier in this
+            section.
+            """
+            save_button = page.get_by_role("button", name="SAVE", exact=True)
 
-        self._step(
-            "Saving CF2...",
-            _save_claim_form_2,
-            critical=True,
-        )
+            last_error = None
+            for attempt in range(1, 4):
+                try:
+                    save_button.wait_for(state="visible", timeout=15000)
+                    save_button.click(timeout=15000)
+                    page.wait_for_load_state("networkidle", timeout=15000)
+                    print(f"CF2 saved successfully (attempt {attempt}).")
+                    return
+                except Exception as e:
+                    last_error = e
+                    print(f"WARNING: CF2 save attempt {attempt} failed: {e}")
+                    page.wait_for_timeout(1000)
+
+            # Last-ditch attempt: bypass Playwright's actionability checks
+            # entirely in case the button exists but is being blocked by
+            # something (overlay, animation, focus trap, etc.).
+            try:
+                page.evaluate(
+                    """() => {
+                        const btns = [...document.querySelectorAll('button')];
+                        const save = btns.find(
+                            b => b.textContent.trim().toUpperCase() === 'SAVE'
+                        );
+                        if (save) save.click();
+                    }"""
+                )
+                page.wait_for_timeout(1500)
+                print("CF2 save fallback: clicked SAVE via JS evaluate.")
+            except Exception as e:
+                print(
+                    f"ERROR: All CF2 save attempts failed. "
+                    f"Last click error: {last_error}. JS fallback error: {e}"
+                )
+                raise
+
+        def _fill_cf2_fields_then_save():
+            if not cf2_tab_opened:
+                # No CF2 tab to fill or save — nothing to do here.
+                return
+
+            self._step(
+                "Filling Signature Over Printed Name of Authorized HCI Representative...",
+                _fill_signature_over_printed_name,
+                critical=False,
+            )
+            page.wait_for_timeout(300)
+
+            self._step(
+                "Filling Official Capacity/Designation...",
+                _fill_official_capacity_designation,
+                critical=False,
+            )
+            page.wait_for_timeout(300)
+
+            self._step(
+                "Setting Part IV Date Signed...",
+                lambda: self._set_part_iv_date_signed(page, data.last_treatment),
+                critical=False,
+            )
+            page.wait_for_timeout(500)
+
+        try:
+            _fill_cf2_fields_then_save()
+        finally:
+            # SAVE fires regardless of what happened above — error,
+            # timeout, or otherwise — as long as the CF2 tab is open.
+            if cf2_tab_opened:
+                self._step(
+                    "Saving CF2 (fallback - always attempted)...",
+                    _save_claim_form_2,
+                    critical=False,
+                )
 
         page.wait_for_timeout(1000)
 
