@@ -3,7 +3,7 @@
 ; -------------------------------
 
 #define MyAppName "Beabots"
-#define MyAppVersion "3.0.0"
+#define MyAppVersion "3.0.1"
 #define MyAppPublisher "Romel Gonzaga"
 #define MyAppURL "https://github.com/rgonzaga19"
 #define MyAppExeName "Beabots.exe"
