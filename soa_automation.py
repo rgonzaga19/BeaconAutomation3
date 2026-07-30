@@ -87,6 +87,23 @@ def _normalize(text):
     text = text.upper()
     return re.sub(r"[^A-Z0-9Ñ]", "", text)
 
+def _filename_tokens(filename):
+    """
+    Returns normalized filename tokens.
+
+    Examples:
+        JUAN DELA CRUZ.xlsx
+            -> ["JUAN", "DELA", "CRUZ"]
+
+        VILLA_JUAN_001.xlsx
+            -> ["VILLA", "JUAN", "001"]
+
+        SO TESSORO.xls
+            -> ["SO", "TESSORO"]
+    """
+    stem = Path(filename).stem.upper()
+    return [t for t in re.split(r"[^A-Z0-9Ñ]+", stem) if t]
+
 
 def _type_into_number_field(page, locator, value, max_attempts=3):
     """
@@ -336,33 +353,56 @@ class SOAAutomation:
             for pattern in ("*.xlsx", "*.xls"):
                 all_files.extend(self.soa_folder.glob(pattern))
 
-            def _matching(key):
-                if not key:
+            def _matching(tokens_to_match):
+                if not tokens_to_match:
                     return []
-                return [f for f in all_files if key in _normalize(f.name)]
 
-            def _has_given_name_marker(filename_norm):
+                tokens_to_match = [t.upper() for t in tokens_to_match]
+                matches = []
+
+                for f in all_files:
+                    tokens = _filename_tokens(f.name)
+
+                    # Look for consecutive whole-word matches
+                    for i in range(len(tokens) - len(tokens_to_match) + 1):
+                        if tokens[i:i + len(tokens_to_match)] == tokens_to_match:
+                            matches.append(f)
+                            break
+
+                return matches
+
+            def _has_given_name_marker(filename):
                 """
-                True if the given name (in full, or just its first letter)
-                sits immediately next to the surname in the normalized
-                filename — covers "DEOCAMPOJ.xlsx", "DEOCAMPO_JUAN.xlsx",
-                "JUAN_DEOCAMPO.xlsx", etc.
+                Returns True if the given name (or initial) is immediately
+                before or after the matched surname as whole words.
                 """
-                idx = filename_norm.find(surname_key)
-                if idx == -1:
-                    return False
 
-                after = filename_norm[idx + len(surname_key):]
-                before = filename_norm[:idx]
+                tokens = _filename_tokens(filename)
 
-                if given_key and (after.startswith(given_key) or before.endswith(given_key)):
-                    return True
-                if given_initial and (after.startswith(given_initial) or before.endswith(given_initial)):
-                    return True
+                for i in range(len(tokens) - len(surname_tokens) + 1):
+
+                    if tokens[i:i + len(surname_tokens)] != surname_tokens:
+                        continue
+
+                    before = tokens[i - 1] if i > 0 else None
+                    after = (
+                        tokens[i + len(surname_tokens)]
+                        if i + len(surname_tokens) < len(tokens)
+                        else None
+                    )
+
+                    if given_tokens:
+                        if before == given_tokens[0] or after == given_tokens[0]:
+                            return True
+
+                    if given_initial:
+                        if before == given_initial or after == given_initial:
+                            return True
+
                 return False
 
             # 1) Priority: full surname match (compound-aware, e.g. "DEOCAMPO").
-            matches = _matching(surname_key)
+            matches = _matching(surname_tokens)
 
             # 2) Fallback: surname without the leading particle, in case the
             #    filename dropped "DE"/"DEL"/etc. (e.g. just "OCAMPO.xlsx").
@@ -371,7 +411,7 @@ class SOAAutomation:
                     f"No match for full surname '{surname_key}' — "
                     f"trying bare surname '{bare_surname_key}'"
                 )
-                matches = _matching(bare_surname_key)
+                matches = _matching([surname_tokens[-1]])
 
             # No exact surname match at all (full or bare) — do NOT fall back
             # to searching by given name alone, since a given-name-only match
@@ -393,7 +433,7 @@ class SOAAutomation:
             if len(matches) > 1:
                 narrowed = [
                     f for f in matches
-                    if _has_given_name_marker(_normalize(f.name))
+                    if _has_given_name_marker(f.name)
                 ]
 
                 if not narrowed:
