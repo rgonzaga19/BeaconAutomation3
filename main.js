@@ -1,23 +1,10 @@
-/*
- * Electron main process.
- *
- * Responsibilities (mirrors what tkinter used to own directly):
- *   1. Spawn server.py as a child process on launch, kill it on quit.
- *   2. Own every BrowserWindow (dashboard, CF2, Upload SOA, Settings) —
- *      including the "if already open, focus it instead of duplicating"
- *      guards ui.py used to implement per-window (_open_cf2_window,
- *      _open_upload_soa_window).
- *   3. Handle window chrome (minimize/maximize/close) since the renderer
- *      has no native window controls once frame:false is used.
- *   4. Own native OS dialogs (file-open, folder-browse, save-as) — the
- *      renderer never gets raw file access, only resolved paths.
- */
-
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
+const https = require("https");
+const os = require("os");
 
 const { SERVER_PORT, API_BASE } = require("./config");
 
@@ -32,6 +19,10 @@ const windows = {
   settings: null,
   about: null,
 };
+
+
+let downloadedInstaller = null;
+
 
 // ---------------------------------------------------------------------------
 // Backend server lifecycle
@@ -269,6 +260,153 @@ ipcMain.handle("app:checkForUpdates", async () => {
 
 ipcMain.handle("app:openExternal", async (_event, url) => {
   await shell.openExternal(url);
+});
+
+ipcMain.handle("app:downloadUpdate", async (_event, downloadUrl) => {
+
+  const tempDir = path.join(os.tmpdir(), "Beabots");
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  const fileName = path.basename(new URL(downloadUrl).pathname);
+  const filePath = path.join(tempDir, fileName);
+
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+
+  function download(url, redirects = 0) {
+
+    return new Promise((resolve, reject) => {
+
+      if (redirects > 10) {
+        reject(new Error("Too many redirects."));
+        return;
+      }
+
+      https.get(url, (response) => {
+
+        console.log("Status:", response.statusCode);
+
+        // Follow redirect
+        if (
+          response.statusCode >= 300 &&
+          response.statusCode < 400 &&
+          response.headers.location
+        ) {
+
+          console.log("Redirect ->", response.headers.location);
+
+          response.resume(); // discard response body
+
+          resolve(
+            download(response.headers.location, redirects + 1)
+          );
+
+          return;
+        }
+
+        if (response.statusCode !== 200) {
+          reject(new Error(`Download failed (${response.statusCode})`));
+          return;
+        }
+
+        const totalBytes = Number(response.headers["content-length"] || 0);
+        let downloadedBytes = 0;
+
+        const file = fs.createWriteStream(filePath);
+
+        response.on("data", (chunk) => {
+
+            downloadedBytes += chunk.length;
+
+            const percent = totalBytes
+                ? Math.floor(downloadedBytes * 100 / totalBytes)
+                : 0;
+
+            windows.about?.webContents.send("update-progress", {
+                percent,
+                downloadedBytes,
+                totalBytes
+            });
+
+        });
+
+        response.pipe(file);
+
+        file.on("finish", () => {
+
+          file.close(() => {
+
+            windows.about?.webContents.send("update-progress", {
+                percent: 100,
+                downloadedBytes: totalBytes,
+                totalBytes
+            });
+
+            downloadedInstaller = filePath;
+
+            resolve({
+              success: true,
+              path: filePath
+            });
+
+          });
+
+        });
+
+        file.on("error", (err) => {
+
+          file.close(() => {
+            fs.unlink(filePath, () => {});
+            reject(err);
+          });
+
+        });
+
+      }).on("error", reject);
+
+    });
+
+  }
+
+  return download(downloadUrl);
+
+});
+
+ipcMain.handle("app:installUpdate", async () => {
+
+  if (!downloadedInstaller || !fs.existsSync(downloadedInstaller)) {
+    throw new Error("Installer not found.");
+  }
+
+  const result = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["Install", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    title: "Install Update",
+    message: "The update has been downloaded successfully.\n\nDo you want to install it now?"
+  });
+
+  if (result.response !== 0) {
+    return false;
+  }
+
+  // Stop the backend server before replacing the installation
+  stopServer();
+
+  // Launch the installer
+  spawn(downloadedInstaller, [], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false
+  }).unref();
+
+  // Quit Electron
+  app.quit();
+
+  return true;
+
 });
 
 

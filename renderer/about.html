@@ -85,6 +85,46 @@
                 Checking for updates...
             </div>
 
+            <div id="downloadSection" style="display:none;margin-top:12px;">
+
+                <div id="downloadText" class="label">
+                    Downloading update...
+                </div>
+
+                <div style="
+                    width:100%;
+                    height:10px;
+                    margin-top:8px;
+                    background:#1a2332;
+                    border:1px solid #3d4d68;
+                    border-radius:5px;
+                    overflow:hidden;
+                ">
+
+                    <div
+                        id="downloadProgressBar"
+                        style="
+                            width:0%;
+                            height:100%;
+                            background:#00c853;
+                            transition:width .15s linear;
+                        ">
+                    </div>
+
+                </div>
+
+                <div
+                    id="downloadPercent"
+                    style="
+                        margin-top:6px;
+                        font-size:12px;
+                        color:#9fb6d1;
+                    ">
+                    0%
+                </div>
+
+            </div>
+
             <div class="label" style="margin-top:4px;">Release Notes</div>
 
             <ul id="releaseNotes" class="update-notes">

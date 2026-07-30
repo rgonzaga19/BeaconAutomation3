@@ -25,6 +25,12 @@ contextBridge.exposeInMainWorld("beabots", {
   getVersion: () => ipcRenderer.invoke("app:getVersion"),
   getSettings: () => ipcRenderer.invoke("app:getSettings"),
   checkForUpdates: () => ipcRenderer.invoke("app:checkForUpdates"),
+  downloadUpdate: (url) => ipcRenderer.invoke("app:downloadUpdate", url),
+  installUpdate: () => ipcRenderer.invoke("app:installUpdate"),
+  onUpdateProgress: (callback) => {
+      ipcRenderer.removeAllListeners("update-progress");
+      ipcRenderer.on("update-progress", (_event, data) => callback(data));
+  },
   openExternal: (url) => ipcRenderer.invoke("app:openExternal", url),
 
   // Native dialogs

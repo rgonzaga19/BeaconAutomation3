@@ -12,6 +12,34 @@ const btnDownload = document.getElementById("btnDownload");
 const btnClose = document.getElementById("btnClose");
 const btnTitlebarClose = document.getElementById("btnTitlebarClose");
 
+const downloadSection = document.getElementById("downloadSection");
+const downloadProgressBar = document.getElementById("downloadProgressBar");
+const downloadPercent = document.getElementById("downloadPercent");
+const downloadText = document.getElementById("downloadText");
+
+window.beabots.onUpdateProgress((data) => {
+
+    downloadSection.style.display = "block";
+
+    downloadProgressBar.style.width = data.percent + "%";
+
+    const downloadedMB =
+        (data.downloadedBytes / 1024 / 1024).toFixed(1);
+
+    const totalMB =
+        (data.totalBytes / 1024 / 1024).toFixed(1);
+
+    downloadPercent.textContent =
+        `${data.percent}% (${downloadedMB} MB / ${totalMB} MB)`;
+
+    if (data.percent >= 100) {
+
+        downloadText.textContent = "Download Complete ✔";
+
+    }
+
+});
+
 async function loadAbout() {
 
     // ----------------------------
@@ -60,8 +88,43 @@ async function loadAbout() {
         btnDownload.disabled = false;
         btnDownload.textContent = "Download Update";
 
-        btnDownload.onclick = () => {
-            window.beabots.openExternal(update.download);
+        btnDownload.onclick = async () => {
+
+            btnDownload.disabled = true;
+            btnDownload.textContent = "Downloading...";
+
+            downloadSection.style.display = "block";
+            downloadProgressBar.style.width = "0%";
+            downloadPercent.textContent = "0%";
+            downloadText.textContent = "Downloading update...";
+
+            try {
+
+                const result = await window.beabots.downloadUpdate(update.download);
+
+                updateStatusEl.textContent = "✔ Update downloaded";
+                updateStatusEl.className = "update-status success";
+
+                btnDownload.textContent = "Downloaded";
+
+                const installNow = await window.beabots.installUpdate();
+
+                if (!installNow) {
+                    btnDownload.textContent = "Install Later";
+                    return;
+                }
+
+                console.log("User chose Install");
+
+            } catch (err) {
+
+                alert(err.message);
+
+                btnDownload.disabled = false;
+                btnDownload.textContent = "Download Update";
+
+            }
+
         };
 
     }
