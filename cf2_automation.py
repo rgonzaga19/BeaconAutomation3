@@ -1062,13 +1062,6 @@ class CF2Automation:
             )
             page.wait_for_timeout(300)
 
-            self._step(
-                "Setting Part IV Date Signed...",
-                lambda: self._set_part_iv_date_signed(page, data.last_treatment),
-                critical=False,
-            )
-            page.wait_for_timeout(500)
-
         try:
             _fill_cf2_fields_then_save()
         finally:
@@ -1095,47 +1088,3 @@ class CF2Automation:
             _close_claim_form_2_tab,
             critical=False,
         )
-
-    def _set_part_iv_date_signed(self, page, target_date):
-        """Set Part IV Date Signed."""
-
-        from datetime import datetime
-
-        target_month = target_date.strftime("%B %Y")
-        target_day = str(target_date.day)
-
-        # Open calendar
-        page.locator("button.pdfIndicator").last.click()
-        page.wait_for_timeout(500)
-
-        while True:
-            header = page.locator(
-                "text=/^[A-Za-z]+\\s+\\d{4}$/"
-            ).first.inner_text().strip()
-
-            current = datetime.strptime(header, "%B %Y")
-            wanted = datetime.strptime(target_month, "%B %Y")
-
-            if current.year == wanted.year and current.month == wanted.month:
-                break
-
-            nav_buttons = page.locator("div[role='dialog'] button")
-
-            if current < wanted:
-                nav_buttons.nth(1).click()
-            else:
-                nav_buttons.nth(0).click()
-
-            page.wait_for_timeout(250)
-
-        page.get_by_role(
-            "button",
-            name=target_day,
-            exact=True
-        ).click()
-
-        page.wait_for_timeout(300)
-
-        page.get_by_role("button", name="OK").click()
-
-        page.wait_for_timeout(300)
