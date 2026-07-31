@@ -301,6 +301,61 @@ class SOAAutomation:
 
             self.patient_name = patient_name
 
+            # ── Check CHARGES tab for existing items ────────────────────────
+            # Guards against uploading a second SOA to a transmittal/patient
+            # that has already been processed.
+
+            logger.info("Checking CHARGES tab for existing items...")
+
+            self.page.get_by_role("link", name="CHARGES", exact=True).click()
+            self.page.wait_for_load_state("networkidle")
+            self.page.wait_for_timeout(1500)
+
+            # ------------------------------------------------------------------
+            # Look for uploaded MED items in the Charges grid
+            # ------------------------------------------------------------------
+            logger.info("Searching for uploaded MED items...")
+
+            med_items = self.page.locator("td[title^='MED']")
+
+            existing_charges_count = med_items.count()
+
+            logger.info(f"MED items found: {existing_charges_count}")
+
+            for i in range(existing_charges_count):
+                try:
+                    value = med_items.nth(i).get_attribute("title")
+                    logger.info(f"Found existing item: {value}")
+                except Exception:
+                    pass
+
+            if existing_charges_count > 0:
+                logger.warning(
+                    f"Charges table already has {existing_charges_count} "
+                    "item(s) — SOA appears to already be uploaded for this "
+                    "transmittal. Skipping to avoid a duplicate upload."
+                )
+
+                result["status"] = "skipped"
+                result["message"] = (
+                    f"Charges table already has {existing_charges_count} "
+                    "item(s) — SOA already uploaded, skipping to avoid duplicate."
+                )
+
+                self.results.append(result)
+
+                is_last = (idx == total - 1)
+
+                if not is_last:
+                    try:
+                        open_transmittals(self.page)
+                    except Exception:
+                        pass
+
+                return result
+
+            logger.success("Charges table is empty — proceeding with upload.")
+
             # ── Open PAYMENTS tab ─────────────────────────────────
 
             logger.info("Opening PAYMENTS tab...")
@@ -353,7 +408,23 @@ class SOAAutomation:
             for pattern in ("*.xlsx", "*.xls"):
                 all_files.extend(self.soa_folder.glob(pattern))
 
-            def _matching(tokens_to_match):
+            def _matching(tokens_to_match, require_exact_length=False):
+                """
+                Looks for tokens_to_match as a consecutive, whole-word run
+                inside each filename's tokens.
+
+                require_exact_length=True additionally rejects a match if
+                the token immediately before the match is itself a surname
+                particle (DE/DEL/SAN/etc.). That guards against a shorter
+                patient surname (e.g. "RESUS") falsely matching inside a
+                filename whose real surname is longer and compound (e.g.
+                "DE RESUS.xlsx", which likely belongs to a different
+                patient whose actual surname is "DE RESUS", not "RESUS").
+                Without this, a patient named plain "RESUS" and a filename
+                "DE RESUS.xlsx" belonging to someone else both match on
+                the token "RESUS", creating an ambiguity that shouldn't
+                exist.
+                """
                 if not tokens_to_match:
                     return []
 
@@ -365,9 +436,16 @@ class SOAAutomation:
 
                     # Look for consecutive whole-word matches
                     for i in range(len(tokens) - len(tokens_to_match) + 1):
-                        if tokens[i:i + len(tokens_to_match)] == tokens_to_match:
-                            matches.append(f)
-                            break
+                        if tokens[i:i + len(tokens_to_match)] != tokens_to_match:
+                            continue
+
+                        if require_exact_length:
+                            preceding = tokens[i - 1] if i > 0 else None
+                            if preceding in SURNAME_PARTICLES:
+                                continue
+
+                        matches.append(f)
+                        break
 
                 return matches
 
@@ -401,17 +479,46 @@ class SOAAutomation:
 
                 return False
 
-            # 1) Priority: full surname match (compound-aware, e.g. "DEOCAMPO").
-            matches = _matching(surname_tokens)
+            # 1) Priority: exact-length surname match (compound-aware, e.g.
+            #    "DEOCAMPO"). The matched span must NOT be immediately
+            #    preceded by another particle — otherwise the filename's
+            #    real surname is longer/compound relative to what we
+            #    extracted for this patient (e.g. patient surname "RESUS"
+            #    should not match "DE RESUS.xlsx", since that file's true
+            #    surname is the compound "DE RESUS" and likely belongs to
+            #    a different patient).
+            matches = _matching(surname_tokens, require_exact_length=True)
 
-            # 2) Fallback: surname without the leading particle, in case the
+            # 2) Fallback: loose surname match, ignoring what precedes it.
+            #    Covers cases where our own particle-detection logic didn't
+            #    recognize a genuine compound surname (e.g. an uncommon
+            #    particle not listed in SURNAME_PARTICLES).
+            if not matches:
+                loose_matches = _matching(surname_tokens)
+                if loose_matches:
+                    logger.info(
+                        f"No exact-length match for surname '{surname_key}' "
+                        f"— falling back to loose match: "
+                        f"{[f.name for f in loose_matches]}"
+                    )
+                matches = loose_matches
+
+            # 3) Fallback: surname without the leading particle, in case the
             #    filename dropped "DE"/"DEL"/etc. (e.g. just "OCAMPO.xlsx").
+            #    Exact-length is tried first here too, so a bare-surname
+            #    fallback can't accidentally match a different compound-
+            #    surname file (e.g. "OCAMPO" incorrectly matching inside
+            #    "DE OCAMPO.xlsx" when that file belongs to someone else).
             if not matches and bare_surname_key != surname_key:
                 logger.info(
                     f"No match for full surname '{surname_key}' — "
                     f"trying bare surname '{bare_surname_key}'"
                 )
-                matches = _matching([surname_tokens[-1]])
+                matches = _matching(
+                    [surname_tokens[-1]], require_exact_length=True
+                )
+                if not matches:
+                    matches = _matching([surname_tokens[-1]])
 
             # No exact surname match at all (full or bare) — do NOT fall back
             # to searching by given name alone, since a given-name-only match
