@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <title>Settings</title>
+<script src="js/theme.js"></script>
 <link rel="stylesheet" href="css/theme.css" />
 <style>
   body { overflow: hidden; }
@@ -122,6 +123,7 @@
       <span class="icon">⚙</span>
       <span class="title">SETTINGS</span>
       <span class="spacer"></span>
+      <div class="titlebar-btn" id="btnThemeToggle" title="Toggle theme">🌙</div>
       <div class="titlebar-btn" id="btnMinimize">─</div>
       <div class="titlebar-btn close" id="btnClose">✕</div>
     </div>
@@ -147,6 +149,17 @@
           <input type="text" id="accessKey" />
         </div>
         <span id="accessKeyToggle">👁  View Access Key</span>
+      </div>
+
+      <div class="server-row">
+        <label>▸ APPEARANCE</label>
+        <div class="server-toggle" id="themeToggleRow">
+          <span class="server-label" data-value="dark" id="labelDark">DARK</span>
+          <div class="toggle-track" id="appearanceToggleTrack">
+            <div class="toggle-thumb"></div>
+          </div>
+          <span class="server-label" data-value="light" id="labelLight">LIGHT</span>
+        </div>
       </div>
 
       <div class="server-row">

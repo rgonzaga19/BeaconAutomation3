@@ -33,6 +33,14 @@ contextBridge.exposeInMainWorld("beabots", {
   },
   openExternal: (url) => ipcRenderer.invoke("app:openExternal", url),
 
+  // Theme (light/dark) — persisted in main.js, broadcast to every window
+  getTheme: () => ipcRenderer.invoke("theme:get"),
+  setTheme: (theme) => ipcRenderer.invoke("theme:set", theme),
+  onThemeChanged: (callback) => {
+    ipcRenderer.removeAllListeners("theme:changed");
+    ipcRenderer.on("theme:changed", (_event, theme) => callback(theme));
+  },
+
   // Native dialogs
   selectExcelFile: () => ipcRenderer.invoke("dialog:selectExcelFile"),
   selectSoaFolder: (initialDir) => ipcRenderer.invoke("dialog:selectSoaFolder", initialDir),

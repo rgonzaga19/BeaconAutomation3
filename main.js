@@ -23,6 +23,44 @@ const windows = {
 
 let downloadedInstaller = null;
 
+// ---------------------------------------------------------------------------
+// Theme (light/dark) — persisted to a small JSON file in userData so it
+// survives app restarts, and broadcast to every open window so they all
+// stay in sync even though each window is a separate renderer with its
+// own localStorage.
+// ---------------------------------------------------------------------------
+const THEME_FILE = path.join(app.getPath("userData"), "theme.json");
+const THEME_BG = { dark: "#0a0e1a", light: "#f2f5fa" };
+let currentTheme = "dark";
+
+function loadTheme() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(THEME_FILE, "utf-8"));
+    if (parsed.theme === "light" || parsed.theme === "dark") {
+      currentTheme = parsed.theme;
+    }
+  } catch (e) {
+    // No file yet (first run) or unreadable — keep the "dark" default.
+  }
+}
+
+function saveTheme(theme) {
+  currentTheme = theme;
+  try {
+    fs.writeFileSync(THEME_FILE, JSON.stringify({ theme }));
+  } catch (e) {
+    console.error("[theme] failed to persist:", e);
+  }
+}
+
+function broadcastTheme(theme, excludeWebContents) {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (win.webContents !== excludeWebContents) {
+      win.webContents.send("theme:changed", theme);
+    }
+  });
+}
+
 
 // ---------------------------------------------------------------------------
 // Backend server lifecycle
@@ -107,7 +145,7 @@ function createWindow(key, htmlFile, options = {}) {
     hasShadow: false,
     useContentSize: true,
     icon: ICON_PATH,
-    backgroundColor: "#0a0e1a",
+    backgroundColor: THEME_BG[currentTheme] || THEME_BG.dark,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -203,6 +241,18 @@ ipcMain.handle("window:focusSelf", (event) => {
     win.moveTop();
     win.focus();
   }
+});
+
+// ---------------------------------------------------------------------------
+// IPC — theme (light/dark)
+// ---------------------------------------------------------------------------
+ipcMain.handle("theme:get", () => currentTheme);
+
+ipcMain.handle("theme:set", (event, theme) => {
+  if (theme !== "light" && theme !== "dark") return currentTheme;
+  saveTheme(theme);
+  broadcastTheme(theme, event.sender);
+  return currentTheme;
 });
 
 // ---------------------------------------------------------------------------
@@ -470,6 +520,7 @@ ipcMain.handle("dialog:saveExcelTemplate", async () => {
 // App lifecycle
 // ---------------------------------------------------------------------------
 app.whenReady().then(() => {
+  loadTheme();
   startServer();
   waitForServer(() => {
     createDashboardWindow();

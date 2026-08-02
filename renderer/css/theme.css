@@ -22,6 +22,33 @@
   --font-mono: "Cascadia Code", "Consolas", "Courier New", monospace;
 }
 
+/* ============================================================
+   Light theme override — swaps every color token above. Applied
+   by setting data-theme="light" on <html> (see js/theme.js).
+   Everything else in this file (and every window's own CSS)
+   reads colors through var(--...), so nothing else needs to
+   change for light mode to take effect.
+   ============================================================ */
+html[data-theme="light"] {
+  --bg-dark: #f2f5fa;
+  --bg-panel: #ffffff;
+  --bg-card: #eaf0f8;
+  --border: #cbd8e8;
+  --accent: #0089b3;
+  --accent2: #006f94;
+  --glow-cyan: #d9f0f8;
+  --success: #10945f;
+  --warning: #a86400;
+  --error: #c9314f;
+  --text-pri: #10192b;
+  --text-sec: #51667f;
+}
+
+/* ---------- Theme toggle button (titlebar) ---------- */
+.titlebar-btn#btnThemeToggle {
+  font-size: 14px;
+}
+
 * {
   box-sizing: border-box;
 }
