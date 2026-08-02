@@ -29,16 +29,19 @@
     color: var(--accent);
     border: 1px solid var(--border);
     background: var(--bg-panel);
+    border-radius: var(--radius-md);
     font-size: 16px;
   }
   .page-header .title-block { line-height: 1.3; }
   .page-header .title {
+    font-family: var(--font-ui);
     color: var(--text-pri);
     font-size: 15px;
-    font-weight: bold;
+    font-weight: 700;
     letter-spacing: 0.4px;
   }
   .page-header .subtitle {
+    font-family: var(--font-ui);
     color: var(--text-sec);
     font-size: 10.5px;
     letter-spacing: 0.3px;
@@ -53,7 +56,7 @@
     min-height: 0;
   }
 
-  .section-block { padding: 4px 16px 16px 16px; }
+  .section-block { padding: 4px 16px 16px 16px; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
 
   /* ---------- Claim period ---------- */
   .field-row {
@@ -75,6 +78,7 @@
     background: var(--bg-card);
     color: var(--text-pri);
     border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     font-family: var(--font-mono);
     font-size: 12px;
     padding: 7px 10px;
@@ -82,7 +86,8 @@
   }
   .field-group select:focus {
     outline: none;
-    box-shadow: inset 0 0 0 1px var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
   .field-group select:disabled { opacity: 0.5; }
 
@@ -110,10 +115,12 @@
     align-items: center;
     gap: 8px;
     color: var(--text-sec);
+    font-family: var(--font-mono);
     font-size: 12px;
-    padding: 8px 10px;
+    padding: 8px 12px;
     background: var(--bg-card);
     border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
   }
   .file-status::before {
     content: "";
@@ -141,22 +148,25 @@
     flex: none;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-left: 2px solid var(--accent);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-md);
     cursor: pointer;
     text-align: left;
     padding: 16px 16px 14px 16px;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    transition: border-color 0.15s ease, background 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
   }
   .guide-card:hover {
-    background: var(--glow-cyan);
+    background: var(--accent-soft);
     border-color: var(--accent);
+    box-shadow: var(--shadow-sm);
   }
   .guide-card .guide-title {
+    font-family: var(--font-ui);
     color: var(--accent);
-    font-weight: bold;
+    font-weight: 700;
     font-size: 11.5px;
     letter-spacing: 0.4px;
   }
@@ -168,8 +178,9 @@
   .guide-card .guide-open-btn {
     margin-top: auto;
     align-self: flex-start;
+    font-family: var(--font-ui);
     color: var(--accent);
-    font-weight: bold;
+    font-weight: 700;
     font-size: 10.5px;
     letter-spacing: 0.3px;
   }
@@ -189,8 +200,10 @@
     gap: 10px;
     background: var(--bg-card);
     border: 1px solid var(--border);
+    border-radius: var(--radius-md);
     padding: 10px 14px;
     color: var(--text-pri);
+    font-family: var(--font-mono);
     font-size: 12.5px;
   }
   .stat-card .stat-icon {
@@ -220,9 +233,11 @@
   /* ---------- User Guide modal ---------- */
   .guide-modal .modal-box { max-width: 620px; max-height: 80vh; overflow-y: auto; padding: 24px 26px; }
   .guide-modal h2 {
+    font-family: var(--font-ui);
     text-align: left;
     color: var(--text-pri);
     font-size: 14px;
+    font-weight: 700;
     letter-spacing: 0.5px;
     margin: 0 0 4px 0;
     padding-bottom: 14px;
@@ -245,9 +260,10 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: transparent;
+    background: var(--accent-soft);
     color: var(--accent);
     border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
     font-weight: bold;
     font-size: 11px;
     width: 22px;

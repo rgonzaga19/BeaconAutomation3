@@ -30,7 +30,7 @@ let downloadedInstaller = null;
 // own localStorage.
 // ---------------------------------------------------------------------------
 const THEME_FILE = path.join(app.getPath("userData"), "theme.json");
-const THEME_BG = { dark: "#0a0e1a", light: "#f2f5fa" };
+const THEME_BG = { dark: "#0a0e16", light: "#f5f7fb" };
 let currentTheme = "dark";
 
 function loadTheme() {

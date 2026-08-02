@@ -23,9 +23,10 @@
 
 .brand-name {
     color: var(--text-pri);
-    font-size: 28px;
-    font-weight: bold;
-    letter-spacing: 1px;
+    font-family: var(--font-ui);
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
 }
 
 .version {
@@ -37,6 +38,8 @@
 .card-panel {
     margin-bottom: 18px;
     padding-bottom: 14px;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
 }
 
 .card-panel .section-label {
@@ -53,8 +56,8 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--glow-cyan);
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border);
 }
 
 .info-row:last-child {
@@ -71,8 +74,9 @@
 
 .info-row .value {
     color: var(--text-pri);
-    font-size: 14px;
-    font-weight: bold;
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    font-weight: 600;
     text-align: right;
 }
 
@@ -96,13 +100,15 @@
     align-items: center;
     gap: 8px;
     margin: 2px 14px 14px 14px;
-    padding: 6px 12px;
+    padding: 7px 14px;
     width: fit-content;
+    font-family: var(--font-ui);
     font-size: 12px;
-    font-weight: bold;
-    letter-spacing: 0.3px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
     background: var(--bg-card);
     border: 1px solid var(--border);
+    border-radius: 999px;
 }
 
 .update-status::before {
@@ -141,14 +147,16 @@
     padding: 10px 14px;
     background: var(--bg-card);
     border: 1px solid var(--border);
+    border-radius: var(--radius-md);
     max-height: 140px;
     overflow-y: auto;
 }
 
 .update-notes li {
     color: var(--text-pri);
-    font-size: 13px;
-    line-height: 1.6;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.7;
     padding-left: 14px;
     position: relative;
 }
