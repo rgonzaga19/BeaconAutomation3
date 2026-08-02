@@ -30,7 +30,6 @@ let downloadedInstaller = null;
 // own localStorage.
 // ---------------------------------------------------------------------------
 const THEME_FILE = path.join(app.getPath("userData"), "theme.json");
-const THEME_BG = { dark: "#0a0e16", light: "#f5f7fb" };
 let currentTheme = "dark";
 
 function loadTheme() {
@@ -143,9 +142,16 @@ function createWindow(key, htmlFile, options = {}) {
     frame: false,
     thickFrame: false,
     hasShadow: false,
+    transparent: true,
     useContentSize: true,
     icon: ICON_PATH,
-    backgroundColor: THEME_BG[currentTheme] || THEME_BG.dark,
+    // With transparent:true, backgroundColor paints nothing — the DOM
+    // (.app-window in theme.css) draws the real, theme-matched
+    // background itself. This is what lets its border-radius actually
+    // show rounded corners: the area outside that rounded shape is now
+    // genuinely transparent, instead of a same-color rectangle hiding
+    // the cut.
+    backgroundColor: "#00000000",
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

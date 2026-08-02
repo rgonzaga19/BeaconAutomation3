@@ -71,7 +71,7 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--bg-dark);
+  background: transparent;
   color: var(--text-pri);
   font-family: var(--font-ui);
   font-size: 14px;
