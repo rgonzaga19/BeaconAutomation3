@@ -183,9 +183,9 @@ function createDashboardWindow() {
 
 function createCf2Window() {
   return createWindow("cf2", "cf2.html", {
-    width: 900,
+    width: 1300,
     height: 710,
-    minWidth: 700,
+    minWidth: 1000,
     minHeight: 710,
   });
 }

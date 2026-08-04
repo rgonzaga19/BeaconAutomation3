@@ -100,6 +100,13 @@
     box-shadow: var(--shadow-sm);
     padding: 4px 16px 16px 16px;
   }
+  /* 30:70 split — transmittal input column narrow, logs/report column wide */
+  .body .col:first-child {
+    flex: 3 1 0;
+  }
+  .body .col:last-child {
+    flex: 7 1 0;
+  }
 
   #transmittalsInput {
     flex: 1;

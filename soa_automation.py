@@ -105,17 +105,51 @@ def _filename_tokens(filename):
     return [t for t in re.split(r"[^A-Z0-9Ñ]+", stem) if t]
 
 
+def _wait_for_count(page, locator, min_count=1, timeout_ms=15000, poll_ms=300):
+    """
+    Polls locator.count() until it reaches at least min_count, or the
+    timeout elapses. Returns the final count either way.
+
+    Beacon's pages are React-rendered, so a fixed wait_for_timeout() has
+    to guess how long something takes to appear — too short and it reads
+    an empty/stale DOM, too long and it wastes time on the common case.
+    This instead waits for the actual thing to show up, which matters
+    most exactly when it's slow (e.g. a large SOA file taking longer to
+    process server-side before the Statement of Account modal populates
+    its rows).
+    """
+    elapsed = 0
+    count = locator.count()
+
+    while count < min_count and elapsed < timeout_ms:
+        page.wait_for_timeout(poll_ms)
+        elapsed += poll_ms
+        count = locator.count()
+
+    return count
+
+
 def _type_into_number_field(page, locator, value, max_attempts=3):
     """
     Reliably enters a value into one of Beacon's Summary/Professional Fees
     number-spinner inputs.
 
-    These are React-controlled fields — clicking one and typing right
-    after can outrun the field actually becoming interactive, which
-    silently drops the first keystrokes (e.g. typing "1540" lands as just
-    "40" because the field wasn't ready to accept input yet). This gives
-    the field a short moment to settle after the click, then reads back
-    the value to confirm it actually landed, retrying if it didn't.
+    These are React-controlled fields with two known quirks:
+
+    1. Clicking one and typing right after can outrun the field actually
+       becoming interactive, which silently drops the first keystrokes
+       (e.g. typing "1540" lands as just "40" because the field wasn't
+       ready to accept input yet).
+    2. The typed value can look correct immediately afterward, but then
+       silently snap back to 0 once focus moves to a different field —
+       Beacon appears to only commit the value on blur, and that commit
+       occasionally discards what was typed. Blurring the field
+       ourselves right after typing (via Tab, the same thing a real user
+       tabbing to the next field would do) and re-reading the value
+       *after* that blur — instead of only right after typing — catches
+       this before we move on, rather than only discovering it later
+       once we're back at the Save button with every discount reset to
+       zero.
     """
     target_value = f"{value:.2f}"
 
@@ -130,18 +164,26 @@ def _type_into_number_field(page, locator, value, max_attempts=3):
         page.keyboard.press("Backspace")
         locator.type(target_value, delay=50)
 
+        # Force the same commit a real user tabbing away would trigger,
+        # then re-read the value AFTER that commit — this is where the
+        # field has been observed to snap back to 0.
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(150)
+
         actual = locator.input_value().strip()
         if actual == target_value:
             return
 
         logger.warning(
             f"Attempt {attempt}/{max_attempts}: expected '{target_value}', "
-            f"got '{actual}' — retrying"
+            f"got '{actual}' after blur — retrying"
         )
 
     # Last resort: set the value directly instead of via keystrokes.
     locator.click(force=True)
     locator.fill(target_value)
+    page.keyboard.press("Tab")
+    page.wait_for_timeout(150)
     actual = locator.input_value().strip()
 
     if actual != target_value:
@@ -167,6 +209,19 @@ def open_transmittals(page):
     ).click()
 
     page.wait_for_load_state("networkidle")
+
+    # Make sure the search box is actually there and interactive before
+    # handing control back to the next transmittal. Without this, the
+    # next iteration's search can fire while the list page is still
+    # re-hydrating, silently missing the typed query and producing a
+    # false "transmittal not found" even though it exists.
+    try:
+        page.locator('input[type="text"]').first.wait_for(
+            state="visible", timeout=10000
+        )
+    except Exception:
+        pass
+
     logger.info("Returned to patient list")
 
 
@@ -198,16 +253,44 @@ class SOAAutomation:
             logger.info("=" * 60)
 
             # ── Search transmittal ─────────────────────────────────────────
-            search_box = self.page.locator('input[type="text"]').first
-            search_box.click()
-            search_box.press("Control+A")
-            search_box.press("Backspace")
-            search_box.fill(transmittal_no)
-            search_box.press("Enter")
-            self.page.wait_for_load_state("networkidle")
-            self.page.wait_for_timeout(2000)
+            # Retries once: right after a previous transmittal's success/
+            # skip, the list page can still be re-hydrating for a moment,
+            # so the first search occasionally fires against a not-yet-
+            # ready field and comes back with zero rows even though the
+            # transmittal genuinely exists. A second attempt after a short
+            # wait resolves that without masking a real "not found".
+            row_count = 0
 
-            if self.page.locator("tbody tr").count() == 0:
+            for search_attempt in range(1, 3):
+                search_box = self.page.locator('input[type="text"]').first
+                search_box.wait_for(state="visible", timeout=10000)
+                search_box.click()
+                search_box.press("Control+A")
+                search_box.press("Backspace")
+                search_box.fill(transmittal_no)
+                search_box.press("Enter")
+                self.page.wait_for_load_state("networkidle")
+
+                row_count = _wait_for_count(
+                    self.page,
+                    self.page.locator("tbody tr"),
+                    min_count=1,
+                    timeout_ms=4000,
+                    poll_ms=400,
+                )
+
+                if row_count > 0:
+                    break
+
+                logger.warning(
+                    f"Search attempt {search_attempt}/2: no rows found "
+                    f"yet for '{transmittal_no}'"
+                )
+
+                if search_attempt < 2:
+                    self.page.wait_for_timeout(1500)
+
+            if row_count == 0:
                 logger.warning(f"TRANSMITTAL NOT FOUND: {transmittal_no}")
                 result["status"] = "skipped"
                 result["message"] = "Transmittal not found"
@@ -376,7 +459,16 @@ class SOAAutomation:
                 name="UPLOAD CHARGES AND PAYMENT"
             ).click()
 
-            self.page.wait_for_timeout(1000)
+            # The upload modal/input can take a moment to mount — wait for
+            # the file input to actually attach instead of guessing with a
+            # fixed sleep, since that's what caused missed fields further
+            # down the line when the modal was slow to appear.
+            try:
+                self.page.wait_for_selector(
+                    "input[type='file']", state="attached", timeout=10000
+                )
+            except Exception:
+                pass
 
             logger.success("Upload Charges and Payment clicked")
 
@@ -590,7 +682,18 @@ class SOAAutomation:
 
                 file_input.set_input_files(self.soa_file)
 
-                self.page.wait_for_timeout(1000)
+                # Larger SOA files take noticeably longer to process
+                # server-side — wait for network activity to settle
+                # instead of a fixed delay, so we don't race the
+                # "Statement of Account" button before the upload has
+                # actually finished.
+                try:
+                    self.page.wait_for_load_state(
+                        "networkidle", timeout=20000
+                    )
+                except Exception:
+                    pass
+                self.page.wait_for_timeout(500)
 
                 logger.success("SOA uploaded successfully.")
                 result["status"] = "success"
@@ -609,7 +712,13 @@ class SOAAutomation:
 
                 fc.value.set_files(self.soa_file)
 
-                self.page.wait_for_timeout(1000)
+                try:
+                    self.page.wait_for_load_state(
+                        "networkidle", timeout=20000
+                    )
+                except Exception:
+                    pass
+                self.page.wait_for_timeout(500)
 
                 logger.success("SOA uploaded successfully.")
 
@@ -618,9 +727,15 @@ class SOAAutomation:
 
             logger.info("Opening Statement of Account...")
 
-            self.page.locator(
+            soa_button = self.page.locator(
                 "button:has(span:text('Statement of Account'))"
-            ).click()
+            )
+
+            # Wait generously — this button (and the modal it opens) can
+            # take a while to become available right after a large
+            # upload finishes processing.
+            soa_button.wait_for(state="visible", timeout=20000)
+            soa_button.click()
 
             self.page.wait_for_timeout(1000)
 
@@ -637,19 +752,39 @@ class SOAAutomation:
 
             logger.info(f"Using {'Senior' if is_senior else 'PWD'} Discount")
 
-            # Summary of Fees only (first 6 rows)
-            actual_inputs = self.page.locator("input[id^='actualCharges']").filter(
-                has_not=self.page.locator(":disabled").locator("xpath=..")
-            )
-
             # Get all disabled Actual Charges (Summary section)
             actual_inputs = self.page.locator("input[id^='actualCharges']:disabled")
-
             discount_inputs = self.page.locator(f"input[id^='{target_prefix}']")
 
-            summary_rows = min(6, actual_inputs.count(), discount_inputs.count())
+            # The Summary/Professional Fees table can take a moment to
+            # render after the modal opens — especially with larger
+            # uploads. Poll for it instead of assuming it's already
+            # there: previously, reading actual_inputs.count() too early
+            # returned 0, so summary_rows came out as 0 and the entire
+            # discount loop below silently did nothing — no error, no
+            # warning, just a "successful" upload with every discount
+            # left blank.
+            actual_count = _wait_for_count(
+                self.page, actual_inputs,
+                min_count=1, timeout_ms=15000, poll_ms=300
+            )
+
+            if actual_count == 0:
+                raise Exception(
+                    "Statement of Account modal did not populate any "
+                    "Actual Charges rows in time — cannot compute "
+                    "discounts. The modal may still be loading, or the "
+                    "upload didn't parse as expected."
+                )
+
+            summary_rows = min(6, actual_count, discount_inputs.count())
 
             logger.info(f"Processing {summary_rows} Summary rows")
+
+            # Tracks every discount field we set, so we can do a final
+            # sweep right before Save and catch any that silently
+            # reverted back to 0 after we moved on to a later field.
+            discount_targets = []
 
             for row in range(summary_rows):
 
@@ -673,6 +808,7 @@ class SOAAutomation:
                     discount = round(amount * 0.20, 2)
 
                     _type_into_number_field(self.page, target, discount)
+                    discount_targets.append((target, f"{discount:.2f}"))
 
                     logger.info(
                         f"Row {row}: {amount} -> {discount:.2f}"
@@ -731,8 +867,59 @@ class SOAAutomation:
 
                 # Discount
                 _type_into_number_field(self.page, pf_discount_input, pf_discount)
+                discount_targets.append((pf_discount_input, f"{pf_discount:.2f}"))
 
                 logger.success("Professional Fees populated.")
+
+            # ==========================================================
+            # Re-verify discount fields before saving
+            # ==========================================================
+            # Beacon has been observed to silently reset a previously-
+            # typed discount back to 0 once focus shifts to a later
+            # field elsewhere on the page — even though it read back
+            # correctly right after being typed. Do one final pass over
+            # every discount field we set, retyping any that reverted,
+            # right before committing with Save.
+
+            if discount_targets:
+                logger.info("Re-verifying discount fields before saving...")
+
+                for verify_pass in range(1, 4):
+                    reverted = []
+
+                    for target_locator, expected in discount_targets:
+                        try:
+                            current = target_locator.input_value().strip()
+                        except Exception:
+                            current = None
+
+                        if current != expected:
+                            reverted.append((target_locator, expected, current))
+
+                    if not reverted:
+                        logger.success("All discount fields verified correct.")
+                        break
+
+                    logger.warning(
+                        f"Verification pass {verify_pass}/3: "
+                        f"{len(reverted)} field(s) reverted — retyping "
+                        + ", ".join(
+                            f"(expected {exp}, got {cur})"
+                            for _, exp, cur in reverted
+                        )
+                    )
+
+                    for target_locator, expected, _ in reverted:
+                        _type_into_number_field(
+                            self.page, target_locator, float(expected)
+                        )
+                else:
+                    logger.warning(
+                        "Some discount fields may still be incorrect "
+                        "after 3 verification passes — proceeding "
+                        "anyway, please double-check this transmittal "
+                        "manually."
+                    )
 
             # ==========================================================
             # Save Statement of Account

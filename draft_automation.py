@@ -19,6 +19,65 @@ from beacon import open_transmittals
 from playwright.sync_api import TimeoutError
 
 
+class InvalidMemberPinError(Exception):
+    """
+    Raised when a Member PIN cannot be validated in Beacon after every
+    retry strategy (as-typed, then with a leading zero) has been
+    exhausted.
+
+    This is intentionally a distinct exception type (not a bare
+    Exception) so callers — specifically cf2_automation.py — can tell
+    "this patient's PIN is bad, skip it and move on" apart from "an
+    unexpected UI/automation error happened, mark it failed". By the
+    time this is raised, _recover_after_pin_failure() has already put
+    the page back in a clean state (dialogs dismissed, back on the
+    Transmittals list) so the NEXT patient's run_create_draft_flow()
+    call starts from a known-good page instead of stalling behind
+    whatever half-open modal the failed search left behind.
+    """
+    pass
+
+
+def _recover_after_pin_failure(page):
+    """
+    Best-effort cleanup after Member PIN validation ultimately fails, so
+    Beacon's UI doesn't stay stuck on a half-open dialog/toast for the
+    next patient. Every action here is individually wrapped and
+    swallowed on failure — cleanup failing must never itself raise and
+    block the batch from moving to the next row, and every wait uses a
+    short explicit timeout so this can't hang.
+    """
+    print("Recovering UI after failed PIN validation...")
+
+    # 1) Dismiss any confirmation/error dialog Beacon may have surfaced
+    #    (name varies by build, so try the common ones).
+    for name in ("OK", "Ok", "Close", "Cancel", "Dismiss"):
+        try:
+            btn = page.get_by_role("button", name=name, exact=True)
+            if btn.count() > 0 and btn.first.is_visible():
+                btn.first.click(timeout=2000)
+                page.wait_for_timeout(300)
+        except Exception:
+            pass
+
+    # 2) Generic "close whatever's on top" fallback.
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+    # 3) Re-anchor on the Transmittals list. This is the same page
+    #    run_create_draft_flow() starts from for the next patient, so
+    #    landing here now guarantees a known, unblocked starting point
+    #    rather than leaving the browser wherever the failed search
+    #    dialog left it.
+    try:
+        open_transmittals(page)
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception as e:
+        print(f"WARNING: Could not re-anchor to Transmittals after PIN failure: {e}")
+
 
 def click_newest_transmittal_menu(page):
     """
@@ -157,9 +216,30 @@ def run_create_draft_flow(page, member_pin, admission_date, discharge_date, draf
     admission_date / discharge_date: strings in MM/DD/YYYY format.
     draft_title: string, already built and length-capped by the caller.
 
-    Raises on failure — caller decides how to log/handle it.
+    Raises on failure — caller decides how to log/handle it:
+      - InvalidMemberPinError: the PIN itself is bad (confirmed after
+        retrying). The page has already been recovered to a clean state
+        by the time this is raised — safe to treat as "skip this row
+        and continue with the next one".
+      - Exception (anything else): an unexpected automation/UI failure.
+        Recovery is still attempted before re-raising, so the page is
+        left as clean as possible for the caller either way.
     """
+    try:
+        _run_create_draft_flow(page, member_pin, admission_date, discharge_date, draft_title)
+    except InvalidMemberPinError:
+        # Already recovered inside _run_create_draft_flow, right where
+        # the failure happened — nothing more to do here.
+        raise
+    except Exception:
+        # Any other failure (timeout, missing element, stale reference,
+        # etc.) — still attempt the same cleanup so the browser isn't
+        # left stuck on a half-open dialog for the next patient.
+        _recover_after_pin_failure(page)
+        raise
 
+
+def _run_create_draft_flow(page, member_pin, admission_date, discharge_date, draft_title):
     # A trailing "/" (or "\", in case Excel/autocorrect flips it) on the
     # Member PIN marks this as a Dependent entry (e.g. "030511447573/").
     # Strip it before it's used as the actual PIN, and remember the flag
@@ -307,29 +387,37 @@ def run_create_draft_flow(page, member_pin, admission_date, discharge_date, draf
         ok_button.wait_for(state="visible", timeout=5000)
         ok_button.click()
 
-    search_button.click()
+    pin_confirmed = False
 
+    search_button.click()
     try:
         _confirm_search_result()
-
+        pin_confirmed = True
     except Exception:
-        print("WARNING: Member not found. Retrying with leading zero...")
+        print("WARNING: Member not found on first attempt.")
 
-        if not member_pin.startswith("0"):
-            member_pin = "0" + member_pin
+    # Only worth retrying with a leading zero if that actually changes
+    # the PIN — retrying the exact same value twice just burns time
+    # without changing the outcome.
+    if not pin_confirmed and not member_pin.startswith("0"):
+        print("Retrying with a leading zero...")
+        member_pin = "0" + member_pin
 
         member_pin_box.click()
         page.keyboard.press("Control+A")
         member_pin_box.fill(member_pin)
-
         search_button.click()
 
         try:
             _confirm_search_result()
-
+            pin_confirmed = True
         except Exception:
-            print(f"ERROR: Incorrect Member PIN: {member_pin}")
-            raise Exception(f"Incorrect Member PIN: {member_pin}")
+            pass
+
+    if not pin_confirmed:
+        print(f"ERROR: Incorrect Member PIN: {member_pin} — skipping this patient.")
+        _recover_after_pin_failure(page)
+        raise InvalidMemberPinError(f"Incorrect Member PIN: {member_pin}")
 
     print("Validating Membership...")
 

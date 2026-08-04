@@ -6,7 +6,11 @@ from cf2_mapper import build_cf2_data
 import browser_session
 from beacon import open_transmittals
 from cf2_fees import get_fees
-from draft_automation import run_create_draft_flow, try_extract_transmittal_number
+from draft_automation import (
+    run_create_draft_flow,
+    try_extract_transmittal_number,
+    InvalidMemberPinError,
+)
 from draft_title import build_draft_title
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -94,6 +98,15 @@ class CF2Automation:
             # fill_cf2 overwrites data.transmittal with the auto-generated
             # number once the draft is created, so re-read it here.
             result["transmittal"] = data.transmittal
+        except InvalidMemberPinError as e:
+            # The PIN itself is bad — not an automation glitch. The page
+            # has already been recovered to a clean state (see
+            # draft_automation._recover_after_pin_failure), so it's safe
+            # to just record this row as skipped and move on to the
+            # next one rather than treating it as a hard failure.
+            result["status"] = "skipped"
+            result["message"] = str(e)
+            print(f"SKIPPED: {data.patient_name} — {e} — moving to next row.")
         except Exception as e:
             result["status"] = "failed"
             result["message"] = f"Unhandled error: {e}"
