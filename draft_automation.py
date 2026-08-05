@@ -79,115 +79,124 @@ def _recover_after_pin_failure(page):
         print(f"WARNING: Could not re-anchor to Transmittals after PIN failure: {e}")
 
 
-def click_newest_transmittal_menu(page):
+
+
+def find_transmittal_row_by_remarks(page, remarks):
     """
-    Clicks the 3-dot action menu of the newest transmittal (first row).
+    Finds the transmittal row by matching the <tr> title attribute.
 
-    Uses several fallback strategies because Beacon's DOM is unstable.
-    Raises Exception if all methods fail.
+    If not found, refreshes the transmittals table and retries
+    up to 3 times before giving up.
     """
 
-    print("Waiting for newest transmittal row...")
+    expected_title = f"REMARKS : {remarks}"
 
-    page.wait_for_selector("tbody tr", timeout=30000)
+    for attempt in range(1, 4):
 
-    first_row = page.locator("tbody tr").first
+        print(f"\n===== Search Attempt {attempt}/3 =====")
+        print(f"Looking for: {expected_title}")
 
-    first_row.wait_for(state="visible", timeout=30000)
+        page.wait_for_selector("tbody tr", timeout=30000)
+
+        rows = page.locator("tbody tr")
+        count = rows.count()
+
+        print(f"Scanning {count} rows...")
+
+        for i in range(count):
+            row = rows.nth(i)
+
+            try:
+                title = row.evaluate("(el) => el.title")
+
+                if title == expected_title:
+                    print(f"Found matching row at index {i}")
+                    return row
+
+            except Exception:
+                pass
+
+        # If this was the last attempt, stop here.
+        if attempt == 3:
+            break
+
+        print("Transmittal not found.")
+        print("Clicking REFRESH...")
+
+        refresh_btn = page.get_by_title("REFRESH")
+        refresh_btn.wait_for(state="visible", timeout=10000)
+        refresh_btn.click(force=True)
+
+        print("REFRESH clicked.")
+
+        page.wait_for_timeout(3000)
+
+        print("Retrying search...")
+
+    raise Exception(f"Unable to find transmittal after 3 attempts: {expected_title}")
+
+def click_row_menu(page, row):
+    """
+    Opens the action menu for the specified transmittal row.
+    Uses the same proven strategies as click_newest_transmittal_menu(),
+    but scoped to the matched row instead of the first row.
+    """
 
     strategies = [
 
-        # ------------------------------------------------------------------
-        # Strategy 1 (BEST)
-        # First row -> last cell -> button
-        # ------------------------------------------------------------------
-        lambda: first_row.locator("td").last.locator("button").click(
+        # Strategy 1
+        lambda: row.locator("td").last.locator("button").click(
             timeout=5000,
             force=True
         ),
 
-        # ------------------------------------------------------------------
         # Strategy 2
-        # First row -> any button
-        # ------------------------------------------------------------------
-        lambda: first_row.locator("button").first.click(
+        lambda: row.locator("button").first.click(
             timeout=5000,
             force=True
         ),
 
-        # ------------------------------------------------------------------
         # Strategy 3
-        # First row -> SVG
-        # ------------------------------------------------------------------
-        lambda: first_row.locator("svg").first.click(
+        lambda: row.locator("svg").first.click(
             timeout=5000,
             force=True
         ),
 
-        # ------------------------------------------------------------------
         # Strategy 4
-        # First row -> SVG Path
-        # ------------------------------------------------------------------
-        lambda: first_row.locator("path").first.click(
+        lambda: row.locator("path").first.click(
             timeout=5000,
             force=True
         ),
 
-        # ------------------------------------------------------------------
         # Strategy 5
-        # Relative CSS
-        # ------------------------------------------------------------------
-        lambda: page.locator(
-            "tbody tr:first-child td:last-child button"
-        ).click(
-            timeout=5000,
-            force=True
-        ),
-
-        # ------------------------------------------------------------------
-        # Strategy 6
-        # Mouse click at center of last cell
-        # ------------------------------------------------------------------
         lambda: (
-            first_row.locator("td").last.scroll_into_view_if_needed(),
-            first_row.locator("td").last.click(
+            row.locator("td").last.scroll_into_view_if_needed(),
+            row.locator("td").last.click(
                 position={"x": 24, "y": 24},
                 timeout=5000,
                 force=True
             )
         ),
 
-        # ------------------------------------------------------------------
-        # Strategy 7
-        # JavaScript click
-        # ------------------------------------------------------------------
-        lambda: page.evaluate("""
-            () => {
-                const row = document.querySelector("tbody tr");
-                if(!row) throw "No row";
-
-                const btn = row.querySelector("td:last-child button");
-                if(!btn) throw "No button";
-
+        # Strategy 6
+        lambda: row.evaluate("""
+            (el) => {
+                const btn = el.querySelector("td:last-child button");
+                if (!btn) throw "No button";
                 btn.click();
             }
         """),
 
-        # ------------------------------------------------------------------
-        # Strategy 8
-        # Dispatch MouseEvent
-        # ------------------------------------------------------------------
-        lambda: page.evaluate("""
-            () => {
-                const row = document.querySelector("tbody tr");
-                if(!row) throw "No row";
-
-                const btn = row.querySelector("button");
+        # Strategy 7
+        lambda: row.evaluate("""
+            (el) => {
+                const btn = el.querySelector("button");
+                if (!btn) throw "No button";
 
                 btn.dispatchEvent(
                     new MouseEvent("click", {
-                        bubbles:true,
-                        cancelable:true
+                        bubbles: true,
+                        cancelable: true
                     })
                 );
             }
@@ -197,6 +206,7 @@ def click_newest_transmittal_menu(page):
     for i, strategy in enumerate(strategies, start=1):
         try:
             print(f"Trying menu strategy #{i}...")
+
             strategy()
 
             page.wait_for_timeout(500)
@@ -208,8 +218,7 @@ def click_newest_transmittal_menu(page):
         except Exception as e:
             print(f"Strategy #{i} failed: {e}")
 
-    raise Exception("Unable to open newest transmittal menu.")
-
+    raise Exception("Unable to open row menu.")
 
 def run_create_draft_flow(page, member_pin, admission_date, discharge_date, draft_title):
     """
@@ -289,11 +298,28 @@ def _run_create_draft_flow(page, member_pin, admission_date, discharge_date, dra
     remarks.fill(draft_title)
 
     page.get_by_role("button", name="Save").click()
+
+    print("Waiting for draft to be saved...")
     page.wait_for_load_state("networkidle")
+
+    print("Refreshing transmittals list...")
+
+    refresh_btn = page.get_by_title("REFRESH")
+    refresh_btn.wait_for(state="visible", timeout=10000)
+    refresh_btn.click(force=True)
 
     page.wait_for_load_state("networkidle")
 
-    click_newest_transmittal_menu(page)
+    page.wait_for_load_state("networkidle")
+
+    print("Waiting for transmittals table to refresh...")
+    page.wait_for_selector("tbody tr", timeout=30000)
+
+    row = find_transmittal_row_by_remarks(page, draft_title)
+
+    print("Opening action menu...")
+
+    click_row_menu(page, row)
 
     page.get_by_text("Manage Claims").click()
 
