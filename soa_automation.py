@@ -34,7 +34,7 @@ SURNAME_PARTICLES = {
 # any trailing period stripped, so both "JR" and "JR." match.
 NAME_SUFFIXES = {
     "JR", "SR",
-    "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+    "II", "III", "lll", "IV", "V", "VI", "VII", "VIII", "IX", "X",
 }
 
 
@@ -64,15 +64,35 @@ def _split_surname_and_given(name):
     absorbing known surname particles so multi-word surnames like
     "DE OCAMPO" or "DE LOS SANTOS" are captured whole, instead of losing
     the particle to the given-name side.
+
+    A hyphen in the last word (e.g. "ONG-HAY") is treated the same way —
+    both halves are always kept together as one compound surname. This
+    matters because filenames get tokenized by splitting on any
+    non-alphanumeric character (so "ONG-HAY.xlsx" becomes ["ONG","HAY"]),
+    and without this, "ONG-HAY" would stay glued into one literal string
+    containing the hyphen, which could never equal either of those
+    filename tokens — so a hyphenated-surname patient's file would never
+    be found no matter how it was named.
     """
     tokens = name.upper().split()
     tokens = _strip_name_suffixes(tokens)
 
-    if len(tokens) <= 1:
+    if not tokens:
+        return [], []
+
+    last = tokens[-1]
+    if "-" in last:
+        hyphen_parts = [p for p in last.split("-") if p]
+        tokens = tokens[:-1] + hyphen_parts
+        forced_len = len(hyphen_parts) or 1
+    else:
+        forced_len = 1
+
+    if len(tokens) <= forced_len:
         return tokens, []
 
-    surname_tokens = [tokens[-1]]
-    i = len(tokens) - 2
+    surname_tokens = tokens[-forced_len:]
+    i = len(tokens) - forced_len - 1
 
     while i >= 0 and tokens[i] in SURNAME_PARTICLES:
         surname_tokens.insert(0, tokens[i])
@@ -516,12 +536,28 @@ class SOAAutomation:
                 "DE RESUS.xlsx" belonging to someone else both match on
                 the token "RESUS", creating an ambiguity that shouldn't
                 exist.
+
+                Independently of that flag, a match is always rejected if
+                it's immediately FOLLOWED by more non-numeric filename
+                content — unless that trailing content is this patient's
+                own given name/initial. This is the mirror-image problem:
+                a plain surname like "ONG" would otherwise match inside
+                "ONG-HAY.xlsx" (tokenized as ["ONG","HAY"], since a hyphen
+                is a separator just like a space), even though "ONG-HAY"
+                is a different, longer surname that just happens to start
+                the same way. A trailing given name/initial is still
+                allowed through, since that's a legitimate disambiguating
+                filename convention (e.g. "DELA CRUZ JUAN.xlsx").
                 """
                 if not tokens_to_match:
                     return []
 
                 tokens_to_match = [t.upper() for t in tokens_to_match]
                 matches = []
+
+                allowed_after = set(given_tokens)
+                if given_initial:
+                    allowed_after.add(given_initial)
 
                 for f in all_files:
                     tokens = _filename_tokens(f.name)
@@ -534,6 +570,14 @@ class SOAAutomation:
                         if require_exact_length:
                             preceding = tokens[i - 1] if i > 0 else None
                             if preceding in SURNAME_PARTICLES:
+                                continue
+
+                        after_idx = i + len(tokens_to_match)
+                        following = (
+                            tokens[after_idx] if after_idx < len(tokens) else None
+                        )
+                        if following is not None and not following.isdigit():
+                            if following not in allowed_after:
                                 continue
 
                         matches.append(f)
