@@ -256,6 +256,18 @@ class SOAAutomation:
         self.patient_name = None
         self.soa_file = None
         self.soa_folder = Path(soa_folder) if soa_folder else DEFAULT_SOA_FOLDER
+    
+    def _cancel_upload_confirmation(self):
+        try:
+            cancel_btn = self.page.locator("button").filter(has_text="Cancel").first
+
+            if cancel_btn.count() > 0:
+                logger.info("Upload confirmation detected. Clicking Cancel...")
+                cancel_btn.click(force=True)
+                self.page.wait_for_timeout(500)
+
+        except Exception:
+            pass
 
     def process_transmittal(self, transmittal_no, idx, total):
         """Process a single transmittal for SOA upload."""
@@ -1003,6 +1015,7 @@ class SOAAutomation:
 
             if not is_last:
                 try:
+                    self._cancel_upload_confirmation()
                     open_transmittals(self.page)
                 except:
                     pass
