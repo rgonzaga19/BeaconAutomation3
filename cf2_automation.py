@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+from datetime import datetime
 import openpyxl
 from cf2_mapper import build_cf2_data
 import browser_session
@@ -1010,6 +1011,117 @@ class CF2Automation:
             designation_input.fill(designation)
             designation_input.press("Tab")
 
+        def _fill_hci_representative_date_signed():
+            """
+            Opens the "Add Date" calendar picker next to Date Signed under
+            PART IV - CERTIFICATION OF CONSUMPTION OF HEALTH CARE
+            INSTITUTION (the HCI Representative's signature block) and
+            selects data.last_treatment — the same date already reused
+            everywhere else on this form (Doctor Sign Date, Access Patient
+            Records date, Statement of Account signatory dates).
+            """
+            target_date = data.last_treatment
+
+            def _open_picker():
+                # Scope to the button that immediately follows the
+                # Official Capacity/Designation field in DOM order, since
+                # that's the "Add Date" icon sitting on the same signature
+                # line (Signature | Designation | Date Signed).
+                add_date_btn = page.locator(
+                    "#officialCapacityDesignation"
+                ).locator(
+                    "xpath=following::button[contains(@class,'pdfIndicator')][1]"
+                )
+
+                if add_date_btn.count() == 0:
+                    add_date_btn = page.get_by_role(
+                        "button", name="Add Date"
+                    ).first
+
+                add_date_btn.scroll_into_view_if_needed()
+                add_date_btn.click(force=True)
+                page.wait_for_timeout(500)
+
+            self._step(
+                "Opening Date Signed picker (HCI Representative)...",
+                _open_picker,
+                critical=False,
+            )
+
+            def _navigate_and_select():
+                # The picker always opens defaulting to TODAY's date (every
+                # screenshot confirms this, e.g. "Thu, Aug 6" when today is
+                # Aug 6). That's a far more reliable anchor than reading and
+                # parsing the on-screen month/year label — a previous
+                # version compared header.inner_text() against a formatted
+                # string and, on any mismatch (whitespace, format drift),
+                # would silently click one direction for up to 24 iterations
+                # and land wherever that happened to end (observed bug: it
+                # opened on Aug 2026 but ended up saving June 2026). Compute
+                # the required number of clicks directly instead — no text
+                # parsing, no equality check, no chance of drifting off.
+                today = datetime.now()
+                months_diff = (
+                    (target_date.year - today.year) * 12
+                    + (target_date.month - today.month)
+                )
+
+                # Arrow buttons are identified by their fixed SVG icon path
+                # (chevron-right = next month, chevron-left = previous
+                # month) since neither button carries a class or label.
+                next_month_btn = page.locator(
+                    'button:has(path[d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"])'
+                )
+                prev_month_btn = page.locator(
+                    'button:has(path[d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"])'
+                )
+
+                btn_to_click = next_month_btn if months_diff > 0 else prev_month_btn
+
+                for _ in range(abs(months_diff)):
+                    btn_to_click.click()
+                    page.wait_for_timeout(250)
+
+                print(
+                    f"  Date Signed picker: today={today.strftime('%m/%d/%Y')}, "
+                    f"target={target_date.strftime('%m/%d/%Y')}, "
+                    f"months_diff={months_diff}"
+                )
+
+                # Day cells are 42px-wide buttons rendered left-to-right,
+                # top-to-bottom for the CURRENT month only. Confirmed via a
+                # live run: leading blank slots before day 1 (e.g. the 2
+                # empty cells before Jul 1, 2026, a Wednesday) are NOT
+                # clickable buttons — they're empty placeholder cells — so
+                # the button list starts right at day 1. (An earlier version
+                # added calendar.monthrange()'s weekday offset on top of
+                # this, which double-counted those leading cells and landed
+                # 2 days late — e.g. clicking "3" instead of "1".) So the
+                # button index is simply the day number minus one.
+                day_cells = page.locator('button[style*="width: 42px"]')
+                cell_index = target_date.day - 1
+
+                print(f"  Date Signed picker: cell_index={cell_index}")
+
+                day_cells.nth(cell_index).click()
+                page.wait_for_timeout(300)
+
+                ok_button = page.get_by_role("button", name="OK", exact=True)
+                if ok_button.count() == 0:
+                    ok_button = page.get_by_text(
+                        re.compile(r"^OK$", re.IGNORECASE)
+                    )
+                ok_button.first.click()
+                page.wait_for_timeout(300)
+
+            self._step(
+                f"Selecting Date Signed (HCI Representative): "
+                f"{target_date.strftime('%m/%d/%Y')}...",
+                _navigate_and_select,
+                critical=False,
+            )
+            page.wait_for_timeout(300)
+
         def _save_claim_form_2():
             """
             Always-attempted fallback. Retries the click a few times and,
@@ -1071,6 +1183,13 @@ class CF2Automation:
             self._step(
                 "Filling Official Capacity/Designation...",
                 _fill_official_capacity_designation,
+                critical=False,
+            )
+            page.wait_for_timeout(300)
+
+            self._step(
+                "Filling Date Signed (HCI Representative)...",
+                _fill_hci_representative_date_signed,
                 critical=False,
             )
             page.wait_for_timeout(300)
