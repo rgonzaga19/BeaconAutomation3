@@ -57,6 +57,35 @@ MONTH_NAMES = [
     "July", "August", "September", "October", "November", "December",
 ]
 
+# Defaults mirror exactly what beacon.py's `auto_encode_cf4` branch used to
+# hardcode inline. They now live here (persisted under settings.json's
+# "cf4" key) so the CF4 screen has something sane to show before the user
+# has ever saved anything, and so a saved settings.json missing a newer
+# key still falls back cleanly instead of sending beacon.run() a hole.
+DEFAULT_CF4_SETTINGS = {
+    "chief_complaint": "FOR HEMODIALYSIS",
+    "body_weakness": True,
+    "lower_extremity_edema": True,
+    "general_survey_awake_alert": True,
+    "heent_normal": True,
+    "chest_lungs_normal": True,
+    "cvs_normal": True,
+    "abdomen_normal": True,
+    "gu_others": True,
+    "gu_others_text": "NOT EXAMINE",
+    "skin_extremities_normal": True,
+    "neuro_exam_normal": True,
+    "course_in_ward_order": "UF GOAL MET AT L",
+}
+
+
+def _load_cf4_settings():
+    """Current CF4 defaults, merged over DEFAULT_CF4_SETTINGS so a
+    settings.json saved before some new field existed doesn't come back
+    with that field missing."""
+    settings = load_settings()
+    return {**DEFAULT_CF4_SETTINGS, **settings.get("cf4", {})}
+
 
 # ---------------------------------------------------------------------------
 # Logging bridge — every automation run still calls logger.<level>(...)
@@ -102,6 +131,28 @@ def post_settings():
     settings.update(data)
     save_settings(settings)
     return jsonify(settings)
+
+
+@app.route("/api/cf4/settings", methods=["GET"])
+def get_cf4_settings():
+    """Backs the CF4 screen's initial load — same values beacon.py's
+    Auto Encode CF4 step will use on the next run."""
+    return jsonify(_load_cf4_settings())
+
+
+@app.route("/api/cf4/settings", methods=["POST"])
+def post_cf4_settings():
+    """
+    Body: any subset of DEFAULT_CF4_SETTINGS' keys. Merged over the
+    current saved values (not replaced wholesale), then written into
+    settings.json under "cf4" via the existing save_settings().
+    """
+    data = request.get_json(force=True)
+    settings = load_settings()
+    cf4 = {**DEFAULT_CF4_SETTINGS, **settings.get("cf4", {}), **data}
+    settings["cf4"] = cf4
+    save_settings(settings)
+    return jsonify(cf4)
 
 
 @app.route("/api/license/validate", methods=["POST"])
@@ -356,10 +407,14 @@ def soa_start():
 _beacon_running = False
 
 
-def _run_beacon_automation(transmittals, auto_encode_cf4):
+def _run_beacon_automation(transmittals, auto_encode_cf4, cf4_settings):
     global _beacon_running
     try:
-        beacon_run(transmittals, auto_encode_cf4=auto_encode_cf4)
+        beacon_run(
+            transmittals,
+            auto_encode_cf4=auto_encode_cf4,
+            cf4_data=cf4_settings,
+        )
     except Exception as ex:
         socketio.emit("log", {"message": f"ERROR: {ex}", "level": "ERROR"})
     finally:
@@ -379,10 +434,16 @@ def beacon_start():
     if _beacon_running:
         return jsonify({"error": "Automation already running."}), 409
 
+    # Read whatever was last saved on the CF4 screen (falls back to
+    # DEFAULT_CF4_SETTINGS for anything never saved) — this is what makes
+    # the checkbox on the dashboard use the *current* CF4 defaults rather
+    # than whatever was hardcoded in beacon.py at build time.
+    cf4_settings = _load_cf4_settings()
+
     _beacon_running = True
     threading.Thread(
         target=_run_beacon_automation,
-        args=(transmittals, auto_encode_cf4),
+        args=(transmittals, auto_encode_cf4, cf4_settings),
         daemon=True,
     ).start()
     return jsonify({"started": True})
@@ -391,4 +452,3 @@ def beacon_start():
 if __name__ == "__main__":
     port = int(os.environ.get("BEABOTS_PORT", 5417))
     socketio.run(app, host="127.0.0.1", port=port, allow_unsafe_werkzeug=True)
-    

@@ -16,6 +16,7 @@ const windows = {
   dashboard: null,
   cf2: null,
   uploadSoa: null,
+  cf4: null,
   settings: null,
   about: null,
 };
@@ -199,6 +200,15 @@ function createUploadSoaWindow() {
   });
 }
 
+function createCf4Window() {
+  return createWindow("cf4", "cf4.html", {
+    width: 820,
+    height: 780,
+    minWidth: 700,
+    minHeight: 600,
+  });
+}
+
 function createSettingsWindow() {
   return createWindow("settings", "settings.html", {
     width: 380,
@@ -270,6 +280,10 @@ ipcMain.handle("open:cf2Window", () => {
 
 ipcMain.handle("open:uploadSoaWindow", () => {
   createUploadSoaWindow();
+});
+
+ipcMain.handle("open:cf4Window", () => {
+  createCf4Window();
 });
 
 ipcMain.handle("open:settingsWindow", () => {

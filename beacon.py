@@ -189,7 +189,30 @@ def _search_transmittal(page, transmittal_no, attempts=3):
     return page.locator("tbody tr").count() > 0
 
 
-def run(transmittals, auto_encode_cf4=False):
+# Same values this branch used to have hardcoded inline — now the
+# fallback for any key the caller (server.py) doesn't supply in
+# `cf4_data`, so a run triggered without a cf4_data dict (e.g. direct
+# script testing) still behaves exactly as before.
+DEFAULT_CF4_DATA = {
+    "chief_complaint": "FOR HEMODIALYSIS",
+    "body_weakness": True,
+    "lower_extremity_edema": True,
+    "general_survey_awake_alert": True,
+    "heent_normal": True,
+    "chest_lungs_normal": True,
+    "cvs_normal": True,
+    "abdomen_normal": True,
+    "gu_others": True,
+    "gu_others_text": "NOT EXAMINE",
+    "skin_extremities_normal": True,
+    "neuro_exam_normal": True,
+    "course_in_ward_order": "UF GOAL MET AT L",
+}
+
+
+def run(transmittals, auto_encode_cf4=False, cf4_data=None):
+    cf4_data = {**DEFAULT_CF4_DATA, **(cf4_data or {})}
+
     try:
 
         report.results.clear()
@@ -357,68 +380,88 @@ def run(transmittals, auto_encode_cf4=False):
                 if auto_encode_cf4:
                     logger.info("Auto Encode CF4 option is enabled.")
 
+                    chief_complaint_text = cf4_data["chief_complaint"]
+
                     def _set_chief_complaint():
                         box = page.locator('textarea[name="chiefComplaint"]').first
                         box.click()
                         box.press("Control+A")
                         box.press("Backspace")
-                        box.fill("FOR HEMODIALYSIS")
-
-                    _try_step("Chief Complaint set to 'FOR HEMODIALYSIS'", _set_chief_complaint)
+                        box.fill(chief_complaint_text)
 
                     _try_step(
-                        "Checked Body Weakness",
-                        lambda: page.locator('input[name="bodyWeakness"]').check(force=True)
-                    )
-                    _try_step(
-                        "Checked Lower Extremity Edema",
-                        lambda: page.locator('input[name="lowerExtremityEdema"]').check(force=True)
+                        f"Chief Complaint set to '{chief_complaint_text}'",
+                        _set_chief_complaint
                     )
 
-                    _try_step(
-                        "General Survey set to 'Awake and alert'",
-                        lambda: page.get_by_text("Awake and alert", exact=True).click(force=True)
-                    )
+                    if cf4_data["body_weakness"]:
+                        _try_step(
+                            "Checked Body Weakness",
+                            lambda: page.locator('input[name="bodyWeakness"]').check(force=True)
+                        )
+                    if cf4_data["lower_extremity_edema"]:
+                        _try_step(
+                            "Checked Lower Extremity Edema",
+                            lambda: page.locator('input[name="lowerExtremityEdema"]').check(force=True)
+                        )
 
-                    _try_step(
-                        "HEENT marked Essentially normal",
-                        lambda: page.locator('input[name="heEssentiallyNormal"]').check(force=True)
-                    )
-                    _try_step(
-                        "CHEST/LUNGS marked Essentially normal",
-                        lambda: page.locator('input[name="clEssentiallyNormal"]').check(force=True)
-                    )
-                    _try_step(
-                        "CVS marked Essentially normal",
-                        lambda: page.locator('input[name="cvEssentiallyNormal"]').check(force=True)
-                    )
-                    _try_step(
-                        "ABDOMEN marked Essentially normal",
-                        lambda: page.locator('input[name="abEssentiallyNormal"]').check(force=True)
-                    )
+                    if cf4_data["general_survey_awake_alert"]:
+                        _try_step(
+                            "General Survey set to 'Awake and alert'",
+                            lambda: page.get_by_text("Awake and alert", exact=True).click(force=True)
+                        )
 
-                    _try_step(
-                        "Checked GU (IE) Others",
-                        lambda: page.locator('input[name="guOthersChk"]').check(force=True)
-                    )
+                    if cf4_data["heent_normal"]:
+                        _try_step(
+                            "HEENT marked Essentially normal",
+                            lambda: page.locator('input[name="heEssentiallyNormal"]').check(force=True)
+                        )
+                    if cf4_data["chest_lungs_normal"]:
+                        _try_step(
+                            "CHEST/LUNGS marked Essentially normal",
+                            lambda: page.locator('input[name="clEssentiallyNormal"]').check(force=True)
+                        )
+                    if cf4_data["cvs_normal"]:
+                        _try_step(
+                            "CVS marked Essentially normal",
+                            lambda: page.locator('input[name="cvEssentiallyNormal"]').check(force=True)
+                        )
+                    if cf4_data["abdomen_normal"]:
+                        _try_step(
+                            "ABDOMEN marked Essentially normal",
+                            lambda: page.locator('input[name="abEssentiallyNormal"]').check(force=True)
+                        )
 
-                    def _fill_gu_others():
-                        gu_others_input = page.locator('input[name="guOthers"]').first
-                        gu_others_input.click()
-                        gu_others_input.press("Control+A")
-                        gu_others_input.press("Backspace")
-                        gu_others_input.fill("NOT EXAMINE")
+                    if cf4_data["gu_others"]:
+                        _try_step(
+                            "Checked GU (IE) Others",
+                            lambda: page.locator('input[name="guOthersChk"]').check(force=True)
+                        )
 
-                    _try_step("GU (IE) Others remarks set to 'NOT EXAMINE'", _fill_gu_others)
+                        gu_others_text = cf4_data["gu_others_text"]
 
-                    _try_step(
-                        "SKIN/EXTREMITIES marked Essentially normal",
-                        lambda: page.locator('input[name="seEssentiallyNormal"]').check(force=True)
-                    )
-                    _try_step(
-                        "NEURO-EXAM marked Essentially normal",
-                        lambda: page.locator('input[name="neEssentiallyNormal"]').check(force=True)
-                    )
+                        def _fill_gu_others():
+                            gu_others_input = page.locator('input[name="guOthers"]').first
+                            gu_others_input.click()
+                            gu_others_input.press("Control+A")
+                            gu_others_input.press("Backspace")
+                            gu_others_input.fill(gu_others_text)
+
+                        _try_step(
+                            f"GU (IE) Others remarks set to '{gu_others_text}'",
+                            _fill_gu_others
+                        )
+
+                    if cf4_data["skin_extremities_normal"]:
+                        _try_step(
+                            "SKIN/EXTREMITIES marked Essentially normal",
+                            lambda: page.locator('input[name="seEssentiallyNormal"]').check(force=True)
+                        )
+                    if cf4_data["neuro_exam_normal"]:
+                        _try_step(
+                            "NEURO-EXAM marked Essentially normal",
+                            lambda: page.locator('input[name="neEssentiallyNormal"]').check(force=True)
+                        )
 
                     _try_step(
                         "CF4 form saved",
@@ -479,6 +522,8 @@ def run(transmittals, auto_encode_cf4=False):
                     # --------------------------------------------------
                     # Add Course in the Ward entries
                     # --------------------------------------------------
+                    course_order_text = cf4_data["course_in_ward_order"]
+
                     for session_date in session_dates:
 
                         logger.info(f"Adding Course in the Ward entry for {session_date}")
@@ -498,7 +543,7 @@ def run(transmittals, auto_encode_cf4=False):
                         order_input.click()
                         order_input.press("Control+A")
                         order_input.press("Backspace")
-                        order_input.fill("UF GOAL MET AT L")
+                        order_input.fill(course_order_text)
 
                         # Save
                         save_btn = page.locator("button:has-text('SAVE')").last

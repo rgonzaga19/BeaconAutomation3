@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld("beabots", {
   // Navigation between windows
   openCf2Window: () => ipcRenderer.invoke("open:cf2Window"),
   openUploadSoaWindow: () => ipcRenderer.invoke("open:uploadSoaWindow"),
+  openCf4Window: () => ipcRenderer.invoke("open:cf4Window"),
   openSettingsWindow: () => ipcRenderer.invoke("open:settingsWindow"),
   openAboutWindow: () => ipcRenderer.invoke("open:aboutWindow"),
 

@@ -6,11 +6,13 @@
  *   - minimize(), maximize(), close(): window chrome, calling the main
  *     process's BrowserWindow controls (replaces tkinter's minimize_window/
  *     toggle_maximize/close_window)
- *   - openCf2Window(), openUploadSoaWindow(), openSettingsWindow():
- *     ask the main process to open (or focus, if already open) those
- *     windows — replaces ui.py's _open_cf2_window()/_open_upload_soa_window()
- *     duplicate-window guards, which now live in the main process since it
- *     owns window lifecycles.
+ *   - openCf2Window(), openUploadSoaWindow(), openSettingsWindow(),
+ *     openCf4Window(): ask the main process to open (or focus, if already
+ *     open) those windows — replaces ui.py's _open_cf2_window()/
+ *     _open_upload_soa_window() duplicate-window guards, which now live in
+ *     the main process since it owns window lifecycles. openCf4Window()
+ *     opens cf4.html, the editable defaults screen for the values
+ *     beacon.py's Auto Encode CF4 step writes into Beacon.
  *
  * These are stubs until main.js (the Electron main process) is built —
  * see the TODO markers below for exactly what each one needs to do.
@@ -39,6 +41,9 @@ document.getElementById("btnCf2").addEventListener("click", () => {
 });
 document.getElementById("btnUploadSoa").addEventListener("click", () => {
   window.beabots?.openUploadSoaWindow();
+});
+document.getElementById("btnCf4").addEventListener("click", () => {
+  window.beabots?.openCf4Window();
 });
 document.getElementById("btnSettings").addEventListener("click", () => {
   window.beabots?.openSettingsWindow();
