@@ -1019,10 +1019,19 @@ class CF2Automation:
             selects data.last_treatment — the same date already reused
             everywhere else on this form (Doctor Sign Date, Access Patient
             Records date, Statement of Account signatory dates).
+
+            Whatever happens here must never block the rest of the form or
+            the final SAVE click. If anything fails after the picker was
+            opened, the popup is dismissed (Cancel, then Escape as a
+            fallback) before moving on — an open calendar overlay left
+            sitting on screen could otherwise intercept the SAVE click that
+            always runs after this, regardless of what happened here.
             """
             target_date = data.last_treatment
+            picker_opened = False
 
             def _open_picker():
+                nonlocal picker_opened
                 # Scope to the button that immediately follows the
                 # Official Capacity/Designation field in DOM order, since
                 # that's the "Add Date" icon sitting on the same signature
@@ -1040,15 +1049,11 @@ class CF2Automation:
 
                 add_date_btn.scroll_into_view_if_needed()
                 add_date_btn.click(force=True)
+                picker_opened = True
                 page.wait_for_timeout(500)
 
-            self._step(
-                "Opening Date Signed picker (HCI Representative)...",
-                _open_picker,
-                critical=False,
-            )
-
             def _navigate_and_select():
+                nonlocal picker_opened
                 # The picker always opens defaulting to TODAY's date (every
                 # screenshot confirms this, e.g. "Thu, Aug 6" when today is
                 # Aug 6). That's a far more reliable anchor than reading and
@@ -1112,14 +1117,50 @@ class CF2Automation:
                         re.compile(r"^OK$", re.IGNORECASE)
                     )
                 ok_button.first.click()
+                picker_opened = False  # OK closes the popup on success
                 page.wait_for_timeout(300)
 
-            self._step(
-                f"Selecting Date Signed (HCI Representative): "
-                f"{target_date.strftime('%m/%d/%Y')}...",
-                _navigate_and_select,
-                critical=False,
-            )
+            def _close_leftover_picker():
+                """
+                Best-effort cleanup only — never raises. Tries CANCEL
+                first (the picker's own dismiss control), then Escape as a
+                generic fallback, so a half-finished date selection can't
+                leave an overlay sitting on top of the SAVE button.
+                """
+                try:
+                    cancel_btn = page.get_by_role(
+                        "button", name="CANCEL", exact=False
+                    )
+                    if cancel_btn.count() > 0:
+                        cancel_btn.first.click(timeout=2000)
+                    else:
+                        page.keyboard.press("Escape")
+                except Exception:
+                    try:
+                        page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+                page.wait_for_timeout(300)
+
+            try:
+                print("Opening Date Signed picker (HCI Representative)...")
+                _open_picker()
+
+                print(
+                    f"Selecting Date Signed (HCI Representative): "
+                    f"{target_date.strftime('%m/%d/%Y')}..."
+                )
+                _navigate_and_select()
+
+                print("Date Signed (HCI Representative) set successfully.")
+            except Exception as e:
+                print(
+                    f"WARNING: Date Signed (HCI Representative) step "
+                    f"failed: {e}. Skipping this field and continuing — "
+                    f"the CF2 form will still be saved."
+                )
+                if picker_opened:
+                    _close_leftover_picker()
             page.wait_for_timeout(300)
 
         def _save_claim_form_2():
