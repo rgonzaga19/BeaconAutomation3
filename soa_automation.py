@@ -220,7 +220,7 @@ def open_transmittals(page):
     try:
         page.get_by_role("button", name="E-CLAIMS").click()
         page.wait_for_load_state("networkidle")
-    except:
+    except Exception:
         pass
 
     page.get_by_text(
@@ -230,17 +230,42 @@ def open_transmittals(page):
 
     page.wait_for_load_state("networkidle")
 
-    # Make sure the search box is actually there and interactive before
-    # handing control back to the next transmittal. Without this, the
-    # next iteration's search can fire while the list page is still
-    # re-hydrating, silently missing the typed query and producing a
-    # false "transmittal not found" even though it exists.
-    try:
-        page.locator('input[type="text"]').first.wait_for(
-            state="visible", timeout=10000
-        )
-    except Exception:
-        pass
+    # Wait until the search box is not only visible but also enabled.
+    # Beacon sometimes renders a disabled search field first while React
+    # is still hydrating the page.
+    max_attempts = 3
+
+    for attempt in range(max_attempts):
+        try:
+            search_box = page.locator(
+                'input[type="text"]:not([disabled])'
+            ).first
+
+            search_box.wait_for(
+                state="visible",
+                timeout=8000
+            )
+
+            # Verify we can actually interact with it.
+            search_box.scroll_into_view_if_needed()
+            search_box.click(timeout=5000)
+            search_box.fill("")
+
+            logger.info("Search box is ready and enabled.")
+            break
+
+        except Exception as e:
+            logger.debug(
+                f"Search box readiness attempt "
+                f"{attempt + 1}/{max_attempts} failed: {e}"
+            )
+
+            if attempt < max_attempts - 1:
+                page.wait_for_timeout(800)
+            else:
+                logger.warning(
+                    "Search box may not be fully ready, proceeding anyway."
+                )
 
     logger.info("Returned to patient list")
 
@@ -285,49 +310,81 @@ class SOAAutomation:
             logger.info("=" * 60)
 
             # ── Search transmittal ─────────────────────────────────────────
-            # Retries once: right after a previous transmittal's success/
-            # skip, the list page can still be re-hydrating for a moment,
-            # so the first search occasionally fires against a not-yet-
-            # ready field and comes back with zero rows even though the
-            # transmittal genuinely exists. A second attempt after a short
-            # wait resolves that without masking a real "not found".
+            logger.info("Searching for transmittal...")
+
             row_count = 0
+            search_attempt_limit = 3
 
-            for search_attempt in range(1, 3):
-                search_box = self.page.locator('input[type="text"]').first
-                search_box.wait_for(state="visible", timeout=10000)
-                search_box.click()
-                search_box.press("Control+A")
-                search_box.press("Backspace")
-                search_box.fill(transmittal_no)
-                search_box.press("Enter")
-                self.page.wait_for_load_state("networkidle")
+            for search_attempt in range(1, search_attempt_limit + 1):
+                try:
+                    search_box = self.page.locator(
+                        'input[type="text"]:not([disabled])'
+                    ).first
 
-                row_count = _wait_for_count(
-                    self.page,
-                    self.page.locator("tbody tr"),
-                    min_count=1,
-                    timeout_ms=4000,
-                    poll_ms=400,
-                )
+                    search_box.wait_for(
+                        state="visible",
+                        timeout=8000
+                    )
 
-                if row_count > 0:
-                    break
+                    search_box.scroll_into_view_if_needed()
 
-                logger.warning(
-                    f"Search attempt {search_attempt}/2: no rows found "
-                    f"yet for '{transmittal_no}'"
-                )
+                    # Ensure the field has focus
+                    search_box.click()
+                    self.page.wait_for_timeout(300)
 
-                if search_attempt < 2:
+                    # Clear any previous search
+                    search_box.press("Control+A")
+                    self.page.wait_for_timeout(100)
+                    search_box.press("Backspace")
+                    self.page.wait_for_timeout(200)
+
+                    # Enter the transmittal number
+                    search_box.fill(transmittal_no)
+                    self.page.wait_for_timeout(300)
+                    search_box.press("Enter")
+
+                    # Wait for Beacon to finish searching
+                    self.page.wait_for_load_state("networkidle")
+                    self.page.wait_for_timeout(500)
+
+                    row_count = _wait_for_count(
+                        self.page,
+                        self.page.locator("tbody tr"),
+                        min_count=1,
+                        timeout_ms=5000,
+                        poll_ms=400,
+                    )
+
+                    if row_count > 0:
+                        logger.success(
+                            f"Found {row_count} row(s) on attempt {search_attempt}"
+                        )
+                        break
+
+                    logger.warning(
+                        f"Search attempt {search_attempt}/{search_attempt_limit}: "
+                        f"no rows found for '{transmittal_no}'"
+                    )
+
+                except Exception as e:
+                    logger.warning(
+                        f"Search attempt {search_attempt}/{search_attempt_limit} "
+                        f"failed: {e}"
+                    )
+
+                if search_attempt < search_attempt_limit:
                     self.page.wait_for_timeout(1500)
 
             if row_count == 0:
-                logger.warning(f"TRANSMITTAL NOT FOUND: {transmittal_no}")
+                logger.error(f"TRANSMITTAL NOT FOUND: {transmittal_no}")
+
                 result["status"] = "skipped"
                 result["message"] = "Transmittal not found"
+
                 self.results.append(result)
                 return result
+
+            logger.success(f"Transmittal '{transmittal_no}' found successfully")
 
             # ── Open first row → Manage Claims ─────────────────────────
             logger.info("Opening row menu...")
@@ -422,39 +479,90 @@ class SOAAutomation:
 
             logger.info("Checking CHARGES tab for existing items...")
 
-            self.page.get_by_role("link", name="CHARGES", exact=True).click()
+            self.page.get_by_role(
+                "link",
+                name="CHARGES",
+                exact=True
+            ).click()
+
             self.page.wait_for_load_state("networkidle")
-            self.page.wait_for_timeout(1500)
 
-            # ------------------------------------------------------------------
-            # Look for uploaded MED items in the Charges grid
-            # ------------------------------------------------------------------
-            logger.info("Searching for uploaded MED items...")
+            # Wait until the table itself is rendered.
+            try:
+                charges_table = self.page.locator("tbody")
+                charges_table.wait_for(
+                    state="visible",
+                    timeout=10000
+                )
+            except Exception:
+                pass
 
-            med_items = self.page.locator("td[title^='MED']")
+            # Give React a little extra time to finish rendering rows.
+            self.page.wait_for_timeout(2000)
 
-            existing_charges_count = med_items.count()
+            logger.info("Searching for existing MED charge items...")
 
-            logger.info(f"MED items found: {existing_charges_count}")
+            med_items = self.page.locator("tbody tr td[title^='MED']")
 
-            for i in range(existing_charges_count):
-                try:
-                    value = med_items.nth(i).get_attribute("title")
-                    logger.info(f"Found existing item: {value}")
-                except Exception:
-                    pass
+            existing_charges_count = 0
+            visible_med_items = []
+
+            try:
+                raw_count = med_items.count()
+
+                logger.info(f"Candidate MED elements found: {raw_count}")
+
+                for i in range(raw_count):
+                    try:
+                        item = med_items.nth(i)
+
+                        # Ignore hidden DOM elements.
+                        if not item.is_visible():
+                            continue
+
+                        title = (item.get_attribute("title") or "").strip()
+                        text = (item.inner_text() or "").strip()
+
+                        # Ignore placeholder cells.
+                        if not title and not text:
+                            continue
+
+                        existing_charges_count += 1
+                        visible_med_items.append(title or text)
+
+                        logger.info(
+                            f"Verified existing charge: "
+                            f"{title or text}"
+                        )
+
+                    except Exception as e:
+                        logger.debug(
+                            f"Unable to inspect MED item {i}: {e}"
+                        )
+
+            except Exception as e:
+                logger.warning(
+                    f"Unable to inspect Charges table: {e}"
+                )
+
+            logger.info(
+                f"Verified MED items: {existing_charges_count}"
+            )
 
             if existing_charges_count > 0:
+
                 logger.warning(
-                    f"Charges table already has {existing_charges_count} "
-                    "item(s) — SOA appears to already be uploaded for this "
-                    "transmittal. Skipping to avoid a duplicate upload."
+                    f"Charges table already has "
+                    f"{existing_charges_count} verified "
+                    f"item(s). Skipping upload."
                 )
 
                 result["status"] = "skipped"
+
                 result["message"] = (
-                    f"Charges table already has {existing_charges_count} "
-                    "item(s) — SOA already uploaded, skipping to avoid duplicate."
+                    f"Charges table already has "
+                    f"{existing_charges_count} "
+                    f"item(s) — SOA already uploaded."
                 )
 
                 self.results.append(result)
@@ -469,7 +577,9 @@ class SOAAutomation:
 
                 return result
 
-            logger.success("Charges table is empty — proceeding with upload.")
+            logger.success(
+                "Charges table is empty — proceeding with upload."
+            )
 
             # ── Open PAYMENTS tab ─────────────────────────────────
 
