@@ -64,20 +64,10 @@ html[data-theme="light"] {
      internal dividers sitting against --bg-panel/--bg-card, and reads
      as almost invisible once it's the only thing separating one
      white window from another (or from a pale desktop) when several
-     are stacked or tiled. This needs to read as a window boundary on
-     its own, so it's a distinct, deliberately darker slate rather
-     than a lightened/tinted version of --border — plus a soft inset
-     accent glow layered just inside it, echoing the accent glow
-     already used elsewhere (status-dot, focus rings) so the boundary
-     reads as part of the app's look rather than a plain outline.
-     The glow has to be inset: .app-window clips with overflow:hidden,
-     so any non-inset shadow on ::after gets cut off at the window's
-     own edge and would never actually show. */
-  --window-edge-color: #3d4a5c;
-  --window-edge:
-    inset 0 0 0 1.5px var(--window-edge-color),
-    inset 0 0 14px rgba(13, 148, 136, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+     are stacked or tiled. Flat black at 1.5px reads as a window
+     boundary on its own, no glow/blur needed. */
+  --window-edge-color: #000000;
+  --window-edge: inset 0 0 0 1.5px var(--window-edge-color);
 }
 
 * {
@@ -172,9 +162,7 @@ html, body {
    edge specifically here rather than exempting light mode from the
    no-glow rule everywhere. */
 html[data-theme="light"] .app-window.no-glow::after {
-  box-shadow:
-    inset 0 0 0 1.5px var(--window-edge-color),
-    inset 0 0 14px rgba(13, 148, 136, 0.22);
+  box-shadow: inset 0 0 0 1.5px var(--window-edge-color);
 }
 
 /* ---------- Custom title bar (replaces the native OS frame) ---------- */
