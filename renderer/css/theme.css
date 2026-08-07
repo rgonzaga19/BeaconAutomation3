@@ -60,7 +60,24 @@ html[data-theme="light"] {
 
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
   --shadow-md: 0 8px 20px rgba(16, 24, 40, 0.08), 0 2px 6px rgba(16, 24, 40, 0.05);
-  --window-edge: inset 0 0 0 1px var(--border);
+  /* Deliberately NOT --border here. --border (#dde3ec) is tuned for
+     internal dividers sitting against --bg-panel/--bg-card, and reads
+     as almost invisible once it's the only thing separating one
+     white window from another (or from a pale desktop) when several
+     are stacked or tiled. This needs to read as a window boundary on
+     its own, so it's a distinct, deliberately darker slate rather
+     than a lightened/tinted version of --border — plus a soft inset
+     accent glow layered just inside it, echoing the accent glow
+     already used elsewhere (status-dot, focus rings) so the boundary
+     reads as part of the app's look rather than a plain outline.
+     The glow has to be inset: .app-window clips with overflow:hidden,
+     so any non-inset shadow on ::after gets cut off at the window's
+     own edge and would never actually show. */
+  --window-edge-color: #3d4a5c;
+  --window-edge:
+    inset 0 0 0 1.5px var(--window-edge-color),
+    inset 0 0 14px rgba(13, 148, 136, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 * {
@@ -146,6 +163,18 @@ html, body {
    plain `border: none` override has no effect on it. */
 .app-window.no-glow::after {
   box-shadow: none;
+}
+
+/* In dark mode a "no-glow" window (the dashboard) still reads clearly
+   against most desktops, since it's near-black. In light mode it's a
+   white window that would otherwise have zero boundary at all — worse
+   than the other windows, not just as bad — so give it back a (lighter)
+   edge specifically here rather than exempting light mode from the
+   no-glow rule everywhere. */
+html[data-theme="light"] .app-window.no-glow::after {
+  box-shadow:
+    inset 0 0 0 1.5px var(--window-edge-color),
+    inset 0 0 14px rgba(13, 148, 136, 0.22);
 }
 
 /* ---------- Custom title bar (replaces the native OS frame) ---------- */
