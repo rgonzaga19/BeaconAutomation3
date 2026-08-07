@@ -511,17 +511,24 @@ ipcMain.handle("dialog:selectSoaFolder", async (_event, initialDir) => {
 });
 
 // CF2 window's "Download Excel Template" link — fetches the template bytes
-// from server.py, then writes them wherever the user chooses.
-ipcMain.handle("dialog:saveExcelTemplate", async () => {
+// from server.py, then writes them wherever the user chooses. mode is
+// "new_draft" (default) or "existing_draft" — see cf2.js's mode toggle —
+// and picks which of the two templates server.py serves.
+ipcMain.handle("dialog:saveExcelTemplate", async (_event, mode) => {
+  const resolvedMode = mode === "existing_draft" ? "existing_draft" : "new_draft";
+  const defaultPath = resolvedMode === "existing_draft"
+    ? "CF2_Template_ExistingDraft.xlsx"
+    : "CF2_Template.xlsx";
+
   const result = await dialog.showSaveDialog({
     title: "Save Excel Template",
-    defaultPath: "CF2_Template.xlsx",
+    defaultPath,
     filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
   });
   if (result.canceled || !result.filePath) return { saved: false };
 
   return new Promise((resolve) => {
-    http.get(`${API_BASE}/api/cf2/download-template`, (res) => {
+    http.get(`${API_BASE}/api/cf2/download-template?mode=${resolvedMode}`, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {

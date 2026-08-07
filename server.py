@@ -50,6 +50,11 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 _state = {
     "selected_file": None,
     "patient_records": [],
+    # "new_draft" (default) or "existing_draft" — set by the most recent
+    # /api/cf2/upload call, read again by /api/cf2/start so the CF2
+    # automation knows whether to create a fresh draft or search for one
+    # that already exists. See cf2_automation.py's CF2Automation.mode.
+    "cf2_mode": "new_draft",
 }
 
 MONTH_NAMES = [
@@ -311,29 +316,34 @@ def license_validate():
 # build_cf2_data, member-pin handling) — only the *output* changed, from
 # Text-widget inserts to a structured JSON payload.
 # ---------------------------------------------------------------------------
-def _analyze_workbook(workbook, claim_year, claim_month=None):
+def _analyze_workbook(workbook, claim_year, claim_month=None, mode="new_draft"):
     sheet = workbook["Sheet1"]
     records = []
 
     for row in range(2, sheet.max_row + 1):
-        # Layout unchanged: A=MEMBER PIN, B=NAME, C=DOCTOR,
-        # D=ACCREDITATION NO., E=TREATMENT DATES.
+        # Column layout is the same in both templates — only what column A
+        # MEANS changes: Member PIN for a fresh draft (new_draft, the
+        # original CF2_Template.xlsx), or an existing Transmittal No. to
+        # search for instead (existing_draft, CF2_Template_ExistingDraft.xlsx).
+        # B=NAME, C=DOCTOR, D=ACCREDITATION NO., E=TREATMENT DATES either way.
         patient = sheet[f"B{row}"].value
         if patient is None:
             continue
 
-        member_pin = sheet[f"A{row}"].value
+        identifier = sheet[f"A{row}"].value
         doctor = sheet[f"C{row}"].value
         accreditation = sheet[f"D{row}"].value
         treatment_dates = sheet[f"E{row}"].value
 
+        identifier_str = str(identifier).strip() if identifier is not None else ""
+
         record = PatientRecord(
-            transmittal="",
+            transmittal=identifier_str if mode == "existing_draft" else "",
             patient_name=str(patient),
             doctor=str(doctor),
             accreditation_no=str(accreditation),
             treatment_dates_raw=str(treatment_dates),
-            member_pin=str(member_pin).strip() if member_pin is not None else "",
+            member_pin=identifier_str if mode == "new_draft" else "",
         )
 
         record.treatment_dates = parse_dates(
@@ -350,10 +360,14 @@ def _analyze_workbook(workbook, claim_year, claim_month=None):
     return records
 
 
-def _record_to_dict(record, cf2):
-    """Same fields the old log_box printed per patient, as JSON instead of text."""
+def _record_to_dict(record, cf2, mode="new_draft"):
+    """Same fields the old log_box printed per patient, as JSON instead of
+    text. "identifier"/"identifier_label" replace the old hardcoded
+    "member_pin" display line so the CF2 window can show whichever column
+    A actually meant for this upload (Member PIN vs. Transmittal No.)."""
     return {
-        "member_pin": record.member_pin,
+        "identifier_label": "Transmittal No." if mode == "existing_draft" else "Member PIN",
+        "identifier": record.transmittal if mode == "existing_draft" else record.member_pin,
         "patient_name": record.patient_name,
         "doctor": record.doctor,
         "accreditation_no": record.accreditation_no,
@@ -377,7 +391,8 @@ def _record_to_dict(record, cf2):
 @app.route("/api/cf2/upload", methods=["POST"])
 def cf2_upload():
     """
-    Body: {"path": "<file path>", "claim_year": 2026, "claim_month": "June"}
+    Body: {"path": "<file path>", "claim_year": 2026, "claim_month": "June",
+           "mode": "new_draft" | "existing_draft"}
     Electron's native file-open dialog already resolved the path — this
     endpoint never receives raw file bytes, just the path on disk.
     """
@@ -386,6 +401,7 @@ def cf2_upload():
     claim_year = int(data.get("claim_year"))
     claim_month_name = data.get("claim_month")
     claim_month = MONTH_NAMES.index(claim_month_name) + 1 if claim_month_name else None
+    mode = data.get("mode") if data.get("mode") in ("new_draft", "existing_draft") else "new_draft"
 
     if not filename or not Path(filename).is_file():
         return jsonify({"error": "File not found."}), 400
@@ -395,11 +411,12 @@ def cf2_upload():
     except Exception as ex:
         return jsonify({"error": str(ex)}), 400
 
-    records = _analyze_workbook(workbook, claim_year, claim_month)
+    records = _analyze_workbook(workbook, claim_year, claim_month, mode)
     _state["selected_file"] = filename
     _state["patient_records"] = records
+    _state["cf2_mode"] = mode
 
-    payload_records = [_record_to_dict(r, build_cf2_data(r)) for r in records]
+    payload_records = [_record_to_dict(r, build_cf2_data(r), mode) for r in records]
 
     return jsonify({
         "sheets": workbook.sheetnames,
@@ -411,12 +428,22 @@ def cf2_upload():
 @app.route("/api/cf2/download-template", methods=["GET"])
 def cf2_download_template():
     """
-    Returns the template bytes. Electron's renderer triggers this, then the
-    main process's native save-as dialog decides where to write it — same
-    end result as the old shutil.copyfile() + asksaveasfilename() flow.
+    Returns the template bytes for the requested mode (?mode=new_draft,
+    the default, or ?mode=existing_draft). Electron's renderer triggers
+    this, then the main process's native save-as dialog decides where to
+    write it — same end result as the old shutil.copyfile() +
+    asksaveasfilename() flow.
     """
-    template_path = resource_path(os.path.join("templates", "CF2_Template.xlsx"))
-    return send_file(template_path, as_attachment=True, download_name="CF2_Template.xlsx")
+    mode = request.args.get("mode") if request.args.get("mode") in ("new_draft", "existing_draft") else "new_draft"
+
+    if mode == "existing_draft":
+        template_path = resource_path(os.path.join("templates", "CF2_Template_ExistingDraft.xlsx"))
+        download_name = "CF2_Template_ExistingDraft.xlsx"
+    else:
+        template_path = resource_path(os.path.join("templates", "CF2_Template.xlsx"))
+        download_name = "CF2_Template.xlsx"
+
+    return send_file(template_path, as_attachment=True, download_name=download_name)
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +459,10 @@ def _run_cf2_automation():
     global _cf2_running
     automation = None
     try:
-        automation = CF2Automation(uploaded_excel_path=_state["selected_file"])
+        automation = CF2Automation(
+            uploaded_excel_path=_state["selected_file"],
+            mode=_state["cf2_mode"],
+        )
         for record in _state["patient_records"]:
             try:
                 automation.process_patient(record)

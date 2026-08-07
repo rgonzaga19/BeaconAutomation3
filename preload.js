@@ -45,5 +45,5 @@ contextBridge.exposeInMainWorld("beabots", {
   // Native dialogs
   selectExcelFile: () => ipcRenderer.invoke("dialog:selectExcelFile"),
   selectSoaFolder: (initialDir) => ipcRenderer.invoke("dialog:selectSoaFolder", initialDir),
-  saveExcelTemplate: () => ipcRenderer.invoke("dialog:saveExcelTemplate"),
+  saveExcelTemplate: (mode) => ipcRenderer.invoke("dialog:saveExcelTemplate", mode),
 });

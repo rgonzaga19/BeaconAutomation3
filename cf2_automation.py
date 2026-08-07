@@ -10,6 +10,7 @@ from cf2_fees import get_fees
 from draft_automation import (
     run_create_draft_flow,
     try_extract_transmittal_number,
+    click_row_menu,
     InvalidMemberPinError,
 )
 from draft_title import build_draft_title
@@ -54,14 +55,40 @@ CF2_TEMPLATE_PATH = resource_path(
 )
 
 
+class TransmittalNotFoundError(Exception):
+    """
+    Raised when mode="existing_draft" and the transmittal number from the
+    uploaded workbook doesn't match anything in Beacon's Transmittals
+    list.
+
+    Distinct from a bare Exception for the same reason InvalidMemberPinError
+    is (see its docstring): process_patient() needs to tell "this row's
+    transmittal number is wrong/doesn't exist yet, skip it and move on"
+    apart from "an unexpected UI/automation error happened, mark it
+    failed". _open_and_search_transmittal() doesn't leave any dialog open
+    on a no-match search — the page is already back on a clean
+    Transmittals list — so no separate recovery step is needed here the
+    way InvalidMemberPinError's does.
+    """
+    pass
+
+
 class CF2Automation:
 
-    def __init__(self, uploaded_excel_path=None):
+    def __init__(self, uploaded_excel_path=None, mode="new_draft"):
         self.page = browser_session.connect()
         # Path to the workbook the user actually uploaded. Sheet2 (Billing
         # Clerk / Accountant name, contact no., official capacity) must be
         # read from THIS file, not from the bundled CF2_TEMPLATE_PATH.
         self.uploaded_excel_path = uploaded_excel_path or CF2_TEMPLATE_PATH
+        # "new_draft" (default): fill_cf2() creates a brand-new Beacon
+        # draft via Create Draft + Add Claims, using each row's Member
+        # PIN — the original behavior, unchanged.
+        # "existing_draft": fill_cf2() skips draft creation entirely and
+        # instead searches the Transmittals list for each row's
+        # transmittal number (already created in Beacon some other way),
+        # then continues into the exact same CF2 field-filling steps.
+        self.mode = mode
         # Every processed patient gets one entry here:
         # {"transmittal": ..., "patient_name": ..., "status": "success"/"skipped"/"failed", "message": ...}
         self.results = []
@@ -99,12 +126,12 @@ class CF2Automation:
             # fill_cf2 overwrites data.transmittal with the auto-generated
             # number once the draft is created, so re-read it here.
             result["transmittal"] = data.transmittal
-        except InvalidMemberPinError as e:
-            # The PIN itself is bad — not an automation glitch. The page
-            # has already been recovered to a clean state (see
-            # draft_automation._recover_after_pin_failure), so it's safe
-            # to just record this row as skipped and move on to the
-            # next one rather than treating it as a hard failure.
+        except (InvalidMemberPinError, TransmittalNotFoundError) as e:
+            # Either the PIN was bad (new_draft mode) or the transmittal
+            # number didn't match anything (existing_draft mode) — not an
+            # automation glitch either way. Safe to record this row as
+            # skipped and move on to the next one rather than treating it
+            # as a hard failure.
             result["status"] = "skipped"
             result["message"] = str(e)
             print(f"SKIPPED: {data.patient_name} — {e} — moving to next row.")
@@ -193,13 +220,17 @@ class CF2Automation:
     def fill_cf2(self, data):
         page = self.page
 
-        self._create_draft(page, data)
+        if self.mode == "existing_draft":
+            self._locate_existing_draft(page, data)
+        else:
+            self._create_draft(page, data)
 
-        # Confirmed via live test: once Add Claims validation completes,
-        # the browser is already sitting on the PHIC Claims Details page
-        # itself (CF1/CF2 tabs, admission/discharge dates pre-filled) — not
-        # a claims list with rows to click into. _open_patient() and
-        # _open_manage_claims() are both unnecessary here now.
+        # Either path leaves the browser sitting directly on the PHIC
+        # Claims Details page itself (CF1/CF2 tabs, admission/discharge
+        # dates pre-filled) — confirmed via a live test for new_draft,
+        # and _open_patient()'s "Manage" click lands on the same page
+        # for existing_draft. Everything below is identical regardless
+        # of which path got here.
 
         self._step(
             "Checking for Validate Eligibility button...",
@@ -270,12 +301,35 @@ class CF2Automation:
         print(f"Draft created. Transmittal number: {data.transmittal}")
 
     # ------------------------------------------------------------------
-    # Legacy — none of these three are called from fill_cf2() anymore
-    # (kept for reference / a possible manual fallback where a transmittal
-    # already exists and just needs to be located by number instead of
-    # created fresh)
+    # Existing-draft flow — used when self.mode == "existing_draft".
+    # Skips Create Draft + Add Claims entirely and instead locates a
+    # transmittal that already exists in Beacon by number, then hands
+    # off to the exact same CF2 field-filling steps fill_cf2() runs for
+    # a freshly-created draft. One transmittal maps to exactly one
+    # patient, so grabbing the first (only) row at each step is correct.
     # ------------------------------------------------------------------
+    def _locate_existing_draft(self, page, data):
+        def _run():
+            row = self._open_and_search_transmittal(page, data)
+            if row is None:
+                raise TransmittalNotFoundError(
+                    f"Transmittal not found: {data.transmittal}"
+                )
+            self._open_manage_claims(page, row)
+            self._open_patient(page)
+
+        self._step(
+            f"Locating existing draft (Transmittal: {data.transmittal})...",
+            _run,
+            critical=True,
+        )
+        print(f"Located existing draft. Transmittal number: {data.transmittal}")
+
     def _open_and_search_transmittal(self, page, data):
+        """Searches the Transmittals list for data.transmittal. Returns
+        the matching row's Locator on success, or None if nothing
+        matched (the page is left on a clean, empty-results Transmittals
+        list either way — no cleanup needed before the next patient)."""
         print("Opening Transmittals...")
         open_transmittals(page)
         page.wait_for_load_state("networkidle")
@@ -293,14 +347,17 @@ class CF2Automation:
 
         if page.locator("tbody tr").count() == 0:
             print("Transmittal not found.")
-            return False
-        return True
+            return None
+        return page.locator("tbody tr").first
 
-    def _open_manage_claims(self, page):
+    def _open_manage_claims(self, page, row):
         def _open():
-            first_row = page.locator("tbody tr").first
-            first_row.locator("button").last.click()
-            page.wait_for_timeout(500)
+            # Same proven multi-strategy menu click run_create_draft_flow()
+            # uses to open a transmittal row's action menu — its success
+            # check (does "Manage Claims" become visible) matches this
+            # context exactly, since it's the same Transmittals-list row
+            # menu either way.
+            click_row_menu(page, row)
             page.get_by_text("Manage Claims", exact=True).click()
             page.wait_for_load_state("networkidle")
 
