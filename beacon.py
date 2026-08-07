@@ -192,22 +192,293 @@ def _search_transmittal(page, transmittal_no, attempts=3):
 # Same values this branch used to have hardcoded inline — now the
 # fallback for any key the caller (server.py) doesn't supply in
 # `cf4_data`, so a run triggered without a cf4_data dict (e.g. direct
-# script testing) still behaves exactly as before.
+# script testing) still behaves exactly as before. Keep this in lockstep
+# with DEFAULT_CF4_SETTINGS in server.py / js/cf4.js — same keys, same
+# values.
+#
+# The settings keys below (snake_case) are ours; the Beacon DOM `name`
+# attributes each one is checked/filled against inside the auto_encode_cf4
+# block further down (camelCase, e.g. "heSunkenFontanelle") were guessed
+# from screenshots of the live CF4 form, not read from Beacon's source —
+# expect some of those locators to need correcting once verified live.
 DEFAULT_CF4_DATA = {
     "chief_complaint": "FOR HEMODIALYSIS",
-    "body_weakness": True,
-    "lower_extremity_edema": True,
+    "history_of_present_illness": "N/A",
+    "pertinent_past_medical_history": "N/A",
     "general_survey_awake_alert": True,
-    "heent_normal": True,
-    "chest_lungs_normal": True,
-    "cvs_normal": True,
-    "abdomen_normal": True,
+    "course_in_ward_order": "UF GOAL MET AT L",
+
+    # Pertinent Signs and Symptoms
+    "altered_mental_sensorium": False,
+    "abdominal_cramp_pain": False,
+    "anorexia": False,
+    "bleeding_gums": False,
+    "body_weakness": True,
+    "blurring_vision": False,
+    "chest_pain_discomfort": False,
+    "constipation": False,
+    "cough": False,
+    "diarrhea": False,
+    "dizziness": False,
+    "dysphagia": False,
+    "dyspnea": False,
+    "dysuria": False,
+    "epistaxis": False,
+    "fever": False,
+    "frequency_of_urination": False,
+    "headache": False,
+    "hematemesis": False,
+    "hematuria": False,
+    "hemoptysis": False,
+    "irritability": False,
+    "jaundice": False,
+    "lower_extremity_edema": True,
+    "myalgia": False,
+    "orthopnea": False,
+    "pain": False,
+    "pain_specify": "",
+    "palpitations": False,
+    "seizures": False,
+    "skin_rashes": False,
+    "stool_bloody_black_tarry_mucoid": False,
+    "sweating": False,
+    "urgency": False,
+    "vomiting": False,
+    "weight_loss": False,
+    "others": False,
+    "others_specify": "",
+
+    # Physical Examination — HEENT
+    "he_essentially_normal": True,
+    "he_sunken_fontanelle": False,
+    "he_abnormal_pupillary_reaction": False,
+    "he_others": False,
+    "he_others_text": "",
+    "he_cervical_lymphadenopathy": False,
+    "he_dry_mucous_membrane": False,
+    "he_icteric_sclerae": False,
+    "he_pale_conjunctivae": False,
+    "he_sunken_eyeballs": False,
+
+    # Physical Examination — Chest / Lungs
+    "cl_essentially_normal": True,
+    "cl_others": False,
+    "cl_others_text": "",
+    "cl_asymmetrical_chest_expansion": False,
+    "cl_decreased_breath_sounds": False,
+    "cl_wheezes": False,
+    "cl_lumps_over_breasts": False,
+    "cl_rales_crackles_rhonchi": False,
+    "cl_intercostal_rib_retraction": False,
+
+    # Physical Examination — CVS
+    "cv_essentially_normal": True,
+    "cv_others": False,
+    "cv_others_text": "",
+    "cv_displaced_apex_beat": False,
+    "cv_heave_and_or_thrills": False,
+    "cv_pericardial_bulge": False,
+    "cv_irregular_rhythm": False,
+    "cv_muffled_heart_sounds": False,
+    "cv_murmur": False,
+
+    # Physical Examination — Abdomen
+    "ab_essentially_normal": True,
+    "ab_others": False,
+    "ab_others_text": "",
+    "ab_abdominal_rigidity": False,
+    "ab_abdominal_tenderness": False,
+    "ab_hyperactive_bowel_sounds": False,
+    "ab_palpable_masses": False,
+    "ab_tympanitic_dull_abdomen": False,
+    "ab_uterine_contraction": False,
+
+    # Physical Examination — GU (IE)
+    "gu_essentially_normal": False,
+    "gu_blood_stained_in_examining_finger": False,
+    "gu_cervical_dilatation": False,
+    "gu_presence_of_abnormal_discharge": False,
     "gu_others": True,
     "gu_others_text": "NOT EXAMINE",
-    "skin_extremities_normal": True,
-    "neuro_exam_normal": True,
-    "course_in_ward_order": "UF GOAL MET AT L",
+
+    # Physical Examination — Skin/Extremities
+    "se_essentially_normal": True,
+    "se_poor_skin_turgor": False,
+    "se_clubbing": False,
+    "se_rashes_petechiae": False,
+    "se_cold_clammy_skin": False,
+    "se_weak_pulses": False,
+    "se_cyanosis_mottled_skin": False,
+    "se_others": False,
+    "se_others_text": "",
+    "se_edema_swelling": False,
+    "se_decreased_mobility": False,
+    "se_pale_nailbeds": False,
+
+    # Physical Examination — Neuro-exam
+    "ne_essentially_normal": True,
+    "ne_poor_coordination": False,
+    "ne_abnormal_gait": False,
+    "ne_others": False,
+    "ne_others_text": "",
+    "ne_abnormal_position_sense": False,
+    "ne_abnormal_sensation": False,
+    "ne_presence_of_abnormal_reflexes": False,
+    "ne_poor_altered_memory": False,
+    "ne_poor_muscle_tone_strength": False,
 }
+
+# ---------------------------------------------------------------------------
+# CF4 checkbox field table — maps each cf4_data settings key (snake_case,
+# same keys as DEFAULT_CF4_SETTINGS in server.py / js/cf4.js) to the
+# Beacon input's guessed `name` attribute (camelCase), the label used in
+# logging, and — for "Others"-style rows — the paired specify text field.
+#
+# Every entry here is a *guess* from screenshots of the live CF4 form,
+# not read from Beacon's actual page source. `body_weakness`,
+# `lower_extremity_edema`, and the six "*_essentially_normal" /
+# `gu_others` entries are the ones already verified against a real run
+# (unchanged from before this table existed); everything else is new and
+# should be spot-checked against the live DOM before relying on it.
+#
+# Each tuple: (settings_key, dom_name, label, specify_settings_key, specify_dom_name)
+CF4_CHECKBOX_FIELDS = [
+    # Pertinent Signs and Symptoms
+    ("altered_mental_sensorium", "alteredMentalSensorium", "Altered Mental Sensorium", None, None),
+    ("abdominal_cramp_pain", "abdominalCrampPain", "Abdominal cramp/pain", None, None),
+    ("anorexia", "anorexia", "Anorexia", None, None),
+    ("bleeding_gums", "bleedingGums", "Bleeding gums", None, None),
+    ("body_weakness", "bodyWeakness", "Body weakness", None, None),
+    ("blurring_vision", "blurringVision", "Blurring vision", None, None),
+    ("chest_pain_discomfort", "chestPainDiscomfort", "Chest pain/discomfort", None, None),
+    ("constipation", "constipation", "Constipation", None, None),
+    ("cough", "cough", "Cough", None, None),
+    ("diarrhea", "diarrhea", "Diarrhea", None, None),
+    ("dizziness", "dizziness", "Dizziness", None, None),
+    ("dysphagia", "dysphagia", "Dysphagia", None, None),
+    ("dyspnea", "dyspnea", "Dyspnea", None, None),
+    ("dysuria", "dysuria", "Dysuria", None, None),
+    ("epistaxis", "epistaxis", "Epistaxis", None, None),
+    ("fever", "fever", "Fever", None, None),
+    ("frequency_of_urination", "frequencyOfUrination", "Frequency of urination", None, None),
+    ("headache", "headache", "Headache", None, None),
+    ("hematemesis", "hematemesis", "Hematemesis", None, None),
+    ("hematuria", "hematuria", "Hematuria", None, None),
+    ("hemoptysis", "hemoptysis", "Hemoptysis", None, None),
+    ("irritability", "irritability", "Irritability", None, None),
+    ("jaundice", "jaundice", "Jaundice", None, None),
+    ("lower_extremity_edema", "lowerExtremityEdema", "Lower extremity edema", None, None),
+    ("myalgia", "myalgia", "Myalgia", None, None),
+    ("orthopnea", "orthopnea", "Orthopnea", None, None),
+    ("pain", "pain", "Pain", "pain_specify", "painSpecify"),
+    ("palpitations", "palpitations", "Palpitations", None, None),
+    ("seizures", "seizures", "Seizures", None, None),
+    ("skin_rashes", "skinRashes", "Skin rashes", None, None),
+    ("stool_bloody_black_tarry_mucoid", "stoolBloodyBlackTarryMucoid", "Stool, bloody/black tarry/mucoid", None, None),
+    ("sweating", "sweating", "Sweating", None, None),
+    ("urgency", "urgency", "Urgency", None, None),
+    ("vomiting", "vomiting", "Vomiting", None, None),
+    ("weight_loss", "weightLoss", "Weight loss", None, None),
+    ("others", "others", "Others (Signs and Symptoms)", "others_specify", "othersSpecify"),
+
+    # Physical Examination — HEENT
+    ("he_essentially_normal", "heEssentiallyNormal", "HEENT — Essentially normal", None, None),
+    ("he_sunken_fontanelle", "heSunkenFontanelle", "HEENT — Sunken fontanelle", None, None),
+    ("he_abnormal_pupillary_reaction", "heAbnormalPupillaryReaction", "HEENT — Abnormal pupillary reaction", None, None),
+    ("he_others", "heOthersChk", "HEENT — Others", "he_others_text", "heOthers"),
+    ("he_cervical_lymphadenopathy", "heCervicalLymphadenopathy", "HEENT — Cervical lymphadenopathy", None, None),
+    ("he_dry_mucous_membrane", "heDryMucousMembrane", "HEENT — Dry mucous membrane", None, None),
+    ("he_icteric_sclerae", "heIctericSclerae", "HEENT — Icteric sclerae", None, None),
+    ("he_pale_conjunctivae", "hePaleConjunctivae", "HEENT — Pale conjunctivae", None, None),
+    ("he_sunken_eyeballs", "heSunkenEyeballs", "HEENT — Sunken eyeballs", None, None),
+
+    # Physical Examination — Chest / Lungs
+    ("cl_essentially_normal", "clEssentiallyNormal", "CHEST/LUNGS — Essentially normal", None, None),
+    ("cl_others", "clOthersChk", "CHEST/LUNGS — Others", "cl_others_text", "clOthers"),
+    ("cl_asymmetrical_chest_expansion", "clAsymmetricalChestExpansion", "CHEST/LUNGS — Asymmetrical chest expansion", None, None),
+    ("cl_decreased_breath_sounds", "clDecreasedBreathSounds", "CHEST/LUNGS — Decreased breath sounds", None, None),
+    ("cl_wheezes", "clWheezes", "CHEST/LUNGS — Wheezes", None, None),
+    ("cl_lumps_over_breasts", "clLumpsOverBreasts", "CHEST/LUNGS — Lump/s over breast(s)", None, None),
+    ("cl_rales_crackles_rhonchi", "clRalesCracklesRhonchi", "CHEST/LUNGS — Rales/crackles/rhonchi", None, None),
+    ("cl_intercostal_rib_retraction", "clIntercostalRibRetraction", "CHEST/LUNGS — Intercostal rib retraction", None, None),
+
+    # Physical Examination — CVS
+    ("cv_essentially_normal", "cvEssentiallyNormal", "CVS — Essentially normal", None, None),
+    ("cv_others", "cvOthersChk", "CVS — Others", "cv_others_text", "cvOthers"),
+    ("cv_displaced_apex_beat", "cvDisplacedApexBeat", "CVS — Displaced apex beat", None, None),
+    ("cv_heave_and_or_thrills", "cvHeaveAndOrThrills", "CVS — Heave and/or thrills", None, None),
+    ("cv_pericardial_bulge", "cvPericardialBulge", "CVS — Pericardial bulge", None, None),
+    ("cv_irregular_rhythm", "cvIrregularRhythm", "CVS — Irregular rhythm", None, None),
+    ("cv_muffled_heart_sounds", "cvMuffledHeartSounds", "CVS — Muffled heart sounds", None, None),
+    ("cv_murmur", "cvMurmur", "CVS — Murmur", None, None),
+
+    # Physical Examination — Abdomen
+    ("ab_essentially_normal", "abEssentiallyNormal", "ABDOMEN — Essentially normal", None, None),
+    ("ab_others", "abOthersChk", "ABDOMEN — Others", "ab_others_text", "abOthers"),
+    ("ab_abdominal_rigidity", "abAbdominalRigidity", "ABDOMEN — Abdominal rigidity", None, None),
+    ("ab_abdominal_tenderness", "abAbdominalTenderness", "ABDOMEN — Abdominal tenderness", None, None),
+    ("ab_hyperactive_bowel_sounds", "abHyperactiveBowelSounds", "ABDOMEN — Hyperactive bowel sounds", None, None),
+    ("ab_palpable_masses", "abPalpableMasses", "ABDOMEN — Palpable mass(es)", None, None),
+    ("ab_tympanitic_dull_abdomen", "abTympaniticDullAbdomen", "ABDOMEN — Tympanitic/dull abdomen", None, None),
+    ("ab_uterine_contraction", "abUterineContraction", "ABDOMEN — Uterine contraction", None, None),
+
+    # Physical Examination — GU (IE)
+    ("gu_essentially_normal", "guEssentiallyNormal", "GU (IE) — Essentially normal", None, None),
+    ("gu_blood_stained_in_examining_finger", "guBloodStainedInExaminingFinger", "GU (IE) — Blood stained in examining finger", None, None),
+    ("gu_cervical_dilatation", "guCervicalDilatation", "GU (IE) — Cervical dilatation", None, None),
+    ("gu_presence_of_abnormal_discharge", "guPresenceOfAbnormalDischarge", "GU (IE) — Presence of abnormal discharge", None, None),
+    ("gu_others", "guOthersChk", "GU (IE) — Others", "gu_others_text", "guOthers"),
+
+    # Physical Examination — Skin/Extremities
+    ("se_essentially_normal", "seEssentiallyNormal", "SKIN/EXTREMITIES — Essentially normal", None, None),
+    ("se_poor_skin_turgor", "sePoorSkinTurgor", "SKIN/EXTREMITIES — Poor skin turgor", None, None),
+    ("se_clubbing", "seClubbing", "SKIN/EXTREMITIES — Clubbing", None, None),
+    ("se_rashes_petechiae", "seRashesPetechiae", "SKIN/EXTREMITIES — Rashes/petechiae", None, None),
+    ("se_cold_clammy_skin", "seColdClammySkin", "SKIN/EXTREMITIES — Cold clammy skin", None, None),
+    ("se_weak_pulses", "seWeakPulses", "SKIN/EXTREMITIES — Weak pulses", None, None),
+    ("se_cyanosis_mottled_skin", "seCyanosisMottledSkin", "SKIN/EXTREMITIES — Cyanosis/mottled skin", None, None),
+    ("se_others", "seOthersChk", "SKIN/EXTREMITIES — Others", "se_others_text", "seOthers"),
+    ("se_edema_swelling", "seEdemaSwelling", "SKIN/EXTREMITIES — Edema/swelling", None, None),
+    ("se_decreased_mobility", "seDecreasedMobility", "SKIN/EXTREMITIES — Decreased mobility", None, None),
+    ("se_pale_nailbeds", "sePaleNailbeds", "SKIN/EXTREMITIES — Pale nailbeds", None, None),
+
+    # Physical Examination — Neuro-exam
+    ("ne_essentially_normal", "neEssentiallyNormal", "NEURO-EXAM — Essentially normal", None, None),
+    ("ne_poor_coordination", "nePoorCoordination", "NEURO-EXAM — Poor coordination", None, None),
+    ("ne_abnormal_gait", "neAbnormalGait", "NEURO-EXAM — Abnormal gait", None, None),
+    ("ne_others", "neOthersChk", "NEURO-EXAM — Others", "ne_others_text", "neOthers"),
+    ("ne_abnormal_position_sense", "neAbnormalPositionSense", "NEURO-EXAM — Abnormal position sense", None, None),
+    ("ne_abnormal_sensation", "neAbnormalSensation", "NEURO-EXAM — Abnormal sensation", None, None),
+    ("ne_presence_of_abnormal_reflexes", "nePresenceOfAbnormalReflexes", "NEURO-EXAM — Presence of abnormal reflex(es)", None, None),
+    ("ne_poor_altered_memory", "nePoorAlteredMemory", "NEURO-EXAM — Poor/altered memory", None, None),
+    ("ne_poor_muscle_tone_strength", "nePoorMuscleToneStrength", "NEURO-EXAM — Poor muscle tone/strength", None, None),
+]
+
+
+def _apply_cf4_checkbox(page, cf4_data, settings_key, dom_name, label, specify_settings_key, specify_dom_name):
+    """Check one CF4 checkbox if cf4_data enables it, and — for
+    "Others"-style rows — fill its paired specify text field too. Every
+    step goes through _try_step so one wrong/renamed locator only skips
+    that field instead of aborting the whole Auto Encode CF4 run."""
+    if not cf4_data.get(settings_key):
+        return
+
+    _try_step(
+        f"Checked {label}",
+        lambda: page.locator(f'input[name="{dom_name}"]').check(force=True)
+    )
+
+    if specify_settings_key and specify_dom_name:
+        specify_text = cf4_data.get(specify_settings_key, "")
+        if specify_text:
+            def _fill_specify():
+                el = page.locator(f'input[name="{specify_dom_name}"]').first
+                el.click()
+                el.press("Control+A")
+                el.press("Backspace")
+                el.fill(specify_text)
+
+            _try_step(f"{label} remarks set to '{specify_text}'", _fill_specify)
 
 
 def run(transmittals, auto_encode_cf4=False, cf4_data=None):
@@ -394,16 +665,33 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                         _set_chief_complaint
                     )
 
-                    if cf4_data["body_weakness"]:
-                        _try_step(
-                            "Checked Body Weakness",
-                            lambda: page.locator('input[name="bodyWeakness"]').check(force=True)
-                        )
-                    if cf4_data["lower_extremity_edema"]:
-                        _try_step(
-                            "Checked Lower Extremity Edema",
-                            lambda: page.locator('input[name="lowerExtremityEdema"]').check(force=True)
-                        )
+                    history_of_present_illness_text = cf4_data["history_of_present_illness"]
+
+                    def _set_history_of_present_illness():
+                        box = page.locator('textarea[name="historyOfPresentIllness"]').first
+                        box.click()
+                        box.press("Control+A")
+                        box.press("Backspace")
+                        box.fill(history_of_present_illness_text)
+
+                    _try_step(
+                        f"History of Present Illness set to '{history_of_present_illness_text}'",
+                        _set_history_of_present_illness
+                    )
+
+                    pertinent_past_medical_history_text = cf4_data["pertinent_past_medical_history"]
+
+                    def _set_pertinent_past_medical_history():
+                        box = page.locator('textarea[name="pertinentPastMedicalHistory"]').first
+                        box.click()
+                        box.press("Control+A")
+                        box.press("Backspace")
+                        box.fill(pertinent_past_medical_history_text)
+
+                    _try_step(
+                        f"Pertinent Past Medical History set to '{pertinent_past_medical_history_text}'",
+                        _set_pertinent_past_medical_history
+                    )
 
                     if cf4_data["general_survey_awake_alert"]:
                         _try_step(
@@ -411,56 +699,14 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                             lambda: page.get_by_text("Awake and alert", exact=True).click(force=True)
                         )
 
-                    if cf4_data["heent_normal"]:
-                        _try_step(
-                            "HEENT marked Essentially normal",
-                            lambda: page.locator('input[name="heEssentiallyNormal"]').check(force=True)
-                        )
-                    if cf4_data["chest_lungs_normal"]:
-                        _try_step(
-                            "CHEST/LUNGS marked Essentially normal",
-                            lambda: page.locator('input[name="clEssentiallyNormal"]').check(force=True)
-                        )
-                    if cf4_data["cvs_normal"]:
-                        _try_step(
-                            "CVS marked Essentially normal",
-                            lambda: page.locator('input[name="cvEssentiallyNormal"]').check(force=True)
-                        )
-                    if cf4_data["abdomen_normal"]:
-                        _try_step(
-                            "ABDOMEN marked Essentially normal",
-                            lambda: page.locator('input[name="abEssentiallyNormal"]').check(force=True)
-                        )
-
-                    if cf4_data["gu_others"]:
-                        _try_step(
-                            "Checked GU (IE) Others",
-                            lambda: page.locator('input[name="guOthersChk"]').check(force=True)
-                        )
-
-                        gu_others_text = cf4_data["gu_others_text"]
-
-                        def _fill_gu_others():
-                            gu_others_input = page.locator('input[name="guOthers"]').first
-                            gu_others_input.click()
-                            gu_others_input.press("Control+A")
-                            gu_others_input.press("Backspace")
-                            gu_others_input.fill(gu_others_text)
-
-                        _try_step(
-                            f"GU (IE) Others remarks set to '{gu_others_text}'",
-                            _fill_gu_others
-                        )
-
-                    if cf4_data["skin_extremities_normal"]:
-                        _try_step(
-                            "SKIN/EXTREMITIES marked Essentially normal",
-                            lambda: page.locator('input[name="seEssentiallyNormal"]').check(force=True)
-                        )
-                    if cf4_data["neuro_exam_normal"]:
-                        _try_step(
-                            "NEURO-EXAM marked Essentially normal",
-                            lambda: page.locator('input[name="neEssentiallyNormal"]').check(force=True)
+                    # All Pertinent Signs and Symptoms + Physical
+                    # Examination checkboxes (and their paired "Others"
+                    # specify text) live in one table — see
+                    # CF4_CHECKBOX_FIELDS above.
+                    for settings_key, dom_name, label, specify_key, specify_dom_name in CF4_CHECKBOX_FIELDS:
+                        _apply_cf4_checkbox(
+                            page, cf4_data, settings_key, dom_name, label,
+                            specify_key, specify_dom_name
                         )
 
                     _try_step(

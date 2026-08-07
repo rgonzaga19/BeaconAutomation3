@@ -58,24 +58,137 @@ MONTH_NAMES = [
 ]
 
 # Defaults mirror exactly what beacon.py's `auto_encode_cf4` branch used to
-# hardcode inline. They now live here (persisted under settings.json's
-# "cf4" key) so the CF4 screen has something sane to show before the user
-# has ever saved anything, and so a saved settings.json missing a newer
-# key still falls back cleanly instead of sending beacon.run() a hole.
+# hardcode inline, now expanded to cover the full "Pertinent Signs and
+# Symptoms" and "Physical Examination" checklists from Beacon's live CF4
+# form. Keep this in lockstep with DEFAULT_CF4_SETTINGS in js/cf4.js —
+# same keys, same values — since that file renders the form these keys
+# back onto and both need to agree with beacon.py's DEFAULT_CF4_DATA on
+# what each key means.
 DEFAULT_CF4_SETTINGS = {
     "chief_complaint": "FOR HEMODIALYSIS",
-    "body_weakness": True,
-    "lower_extremity_edema": True,
+    "history_of_present_illness": "N/A",
+    "pertinent_past_medical_history": "N/A",
     "general_survey_awake_alert": True,
-    "heent_normal": True,
-    "chest_lungs_normal": True,
-    "cvs_normal": True,
-    "abdomen_normal": True,
+    "course_in_ward_order": "UF GOAL MET AT L",
+
+    # Pertinent Signs and Symptoms
+    "altered_mental_sensorium": False,
+    "abdominal_cramp_pain": False,
+    "anorexia": False,
+    "bleeding_gums": False,
+    "body_weakness": True,
+    "blurring_vision": False,
+    "chest_pain_discomfort": False,
+    "constipation": False,
+    "cough": False,
+    "diarrhea": False,
+    "dizziness": False,
+    "dysphagia": False,
+    "dyspnea": False,
+    "dysuria": False,
+    "epistaxis": False,
+    "fever": False,
+    "frequency_of_urination": False,
+    "headache": False,
+    "hematemesis": False,
+    "hematuria": False,
+    "hemoptysis": False,
+    "irritability": False,
+    "jaundice": False,
+    "lower_extremity_edema": True,
+    "myalgia": False,
+    "orthopnea": False,
+    "pain": False,
+    "pain_specify": "",
+    "palpitations": False,
+    "seizures": False,
+    "skin_rashes": False,
+    "stool_bloody_black_tarry_mucoid": False,
+    "sweating": False,
+    "urgency": False,
+    "vomiting": False,
+    "weight_loss": False,
+    "others": False,
+    "others_specify": "",
+
+    # Physical Examination — HEENT
+    "he_essentially_normal": True,
+    "he_sunken_fontanelle": False,
+    "he_abnormal_pupillary_reaction": False,
+    "he_others": False,
+    "he_others_text": "",
+    "he_cervical_lymphadenopathy": False,
+    "he_dry_mucous_membrane": False,
+    "he_icteric_sclerae": False,
+    "he_pale_conjunctivae": False,
+    "he_sunken_eyeballs": False,
+
+    # Physical Examination — Chest / Lungs
+    "cl_essentially_normal": True,
+    "cl_others": False,
+    "cl_others_text": "",
+    "cl_asymmetrical_chest_expansion": False,
+    "cl_decreased_breath_sounds": False,
+    "cl_wheezes": False,
+    "cl_lumps_over_breasts": False,
+    "cl_rales_crackles_rhonchi": False,
+    "cl_intercostal_rib_retraction": False,
+
+    # Physical Examination — CVS
+    "cv_essentially_normal": True,
+    "cv_others": False,
+    "cv_others_text": "",
+    "cv_displaced_apex_beat": False,
+    "cv_heave_and_or_thrills": False,
+    "cv_pericardial_bulge": False,
+    "cv_irregular_rhythm": False,
+    "cv_muffled_heart_sounds": False,
+    "cv_murmur": False,
+
+    # Physical Examination — Abdomen
+    "ab_essentially_normal": True,
+    "ab_others": False,
+    "ab_others_text": "",
+    "ab_abdominal_rigidity": False,
+    "ab_abdominal_tenderness": False,
+    "ab_hyperactive_bowel_sounds": False,
+    "ab_palpable_masses": False,
+    "ab_tympanitic_dull_abdomen": False,
+    "ab_uterine_contraction": False,
+
+    # Physical Examination — GU (IE)
+    "gu_essentially_normal": False,
+    "gu_blood_stained_in_examining_finger": False,
+    "gu_cervical_dilatation": False,
+    "gu_presence_of_abnormal_discharge": False,
     "gu_others": True,
     "gu_others_text": "NOT EXAMINE",
-    "skin_extremities_normal": True,
-    "neuro_exam_normal": True,
-    "course_in_ward_order": "UF GOAL MET AT L",
+
+    # Physical Examination — Skin/Extremities
+    "se_essentially_normal": True,
+    "se_poor_skin_turgor": False,
+    "se_clubbing": False,
+    "se_rashes_petechiae": False,
+    "se_cold_clammy_skin": False,
+    "se_weak_pulses": False,
+    "se_cyanosis_mottled_skin": False,
+    "se_others": False,
+    "se_others_text": "",
+    "se_edema_swelling": False,
+    "se_decreased_mobility": False,
+    "se_pale_nailbeds": False,
+
+    # Physical Examination — Neuro-exam
+    "ne_essentially_normal": True,
+    "ne_poor_coordination": False,
+    "ne_abnormal_gait": False,
+    "ne_others": False,
+    "ne_others_text": "",
+    "ne_abnormal_position_sense": False,
+    "ne_abnormal_sensation": False,
+    "ne_presence_of_abnormal_reflexes": False,
+    "ne_poor_altered_memory": False,
+    "ne_poor_muscle_tone_strength": False,
 }
 
 

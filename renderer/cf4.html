@@ -12,6 +12,11 @@
      visual language as dashboard.html/CF2/Upload SOA (titlebar,
      .cyber-btn, .card, .section-label), just a form instead of a
      log console.
+
+     The "Pertinent Signs and Symptoms" and "Physical Examination"
+     sections are rendered at runtime by js/cf4.js from the field
+     lists there — this file only supplies the container elements
+     (#symptomsColumns, #physicalExamSections) they render into.
      ============================================================ */
 
   .page-header {
@@ -74,12 +79,6 @@
   }
   .field-row textarea, .field-row input[type="text"] { width: 100%; }
 
-  .checkbox-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px 24px;
-    margin: 10px 0 4px 0;
-  }
   .checkbox-row {
     display: flex;
     align-items: center;
@@ -88,16 +87,53 @@
     font-size: 13px;
     color: var(--text-pri);
   }
-  .checkbox-row input[type="checkbox"] { cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent); }
+  .checkbox-row input[type="checkbox"] { cursor: pointer; width: 15px; height: 15px; flex: none; accent-color: var(--accent); }
 
-  .checkbox-with-text {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 12px 0 4px 0;
+  /* "Pain  ....specify...." / "Others  ....specify...." rows — checkbox +
+     label + inline dotted text field, same line, matching the CF4 form. */
+  .checkbox-row.inline-specify { flex-wrap: nowrap; }
+  .checkbox-row.inline-specify > span { flex: none; white-space: nowrap; }
+  .checkbox-row.inline-specify input[type="text"] {
+    flex: 1;
+    min-width: 40px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px dotted var(--border);
+    border-radius: 0;
+    padding: 2px 4px;
+    font-size: 12.5px;
   }
-  .checkbox-with-text .checkbox-row { flex: none; white-space: nowrap; }
-  .checkbox-with-text input[type="text"] { flex: 1; }
+  .checkbox-row.inline-specify input[type="text"]:focus {
+    box-shadow: none;
+    border-bottom-color: var(--accent);
+  }
+
+  /* ---- Pertinent Signs and Symptoms: 4 fixed columns, top-to-bottom
+     within each column, matching the live CF4 form's layout. ---- */
+  .symptom-columns {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px 22px;
+    margin: 10px 0 4px 0;
+  }
+  .symptom-col { display: flex; flex-direction: column; gap: 9px; }
+
+  /* ---- Physical Examination: one card per body system, each with an
+     accent system label and a wrapping checkbox grid. ---- */
+  .system-block { margin-bottom: 18px; }
+  .system-block:last-child { margin-bottom: 4px; }
+  .system-block .system-label {
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    margin: 4px 0 8px 0;
+  }
+  .system-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px 20px;
+  }
 
   .hint { font-size: 11px; color: var(--text-sec); margin: 2px 0 0 0; }
 
@@ -139,19 +175,24 @@
     <div class="form-body">
 
       <div class="form-card">
-        <div class="section-label"><span>▸ CHIEF COMPLAINT</span><div class="rule"></div></div>
+        <div class="section-label"><span>▸ REASON FOR ADMISSION</span><div class="rule"></div></div>
         <div class="field-row">
           <label class="field-label" for="chiefComplaint">Chief Complaint</label>
           <textarea id="chiefComplaint" class="card" rows="2"></textarea>
         </div>
+        <div class="field-row">
+          <label class="field-label" for="historyOfPresentIllness">1. History of Present Illness</label>
+          <textarea id="historyOfPresentIllness" class="card" rows="2"></textarea>
+        </div>
+        <div class="field-row">
+          <label class="field-label" for="pertinentPastMedicalHistory">2.a. Pertinent Past Medical History</label>
+          <textarea id="pertinentPastMedicalHistory" class="card" rows="2"></textarea>
+        </div>
       </div>
 
       <div class="form-card">
-        <div class="section-label"><span>▸ PERTINENT SIGNS AND SYMPTOMS</span><div class="rule"></div></div>
-        <div class="checkbox-grid">
-          <label class="checkbox-row"><input type="checkbox" id="bodyWeakness" /> Body weakness</label>
-          <label class="checkbox-row"><input type="checkbox" id="lowerExtremityEdema" /> Lower extremity edema</label>
-        </div>
+        <div class="section-label"><span>▸ 3. PERTINENT SIGNS AND SYMPTOMS</span><div class="rule"></div></div>
+        <div class="symptom-columns" id="symptomsColumns"></div>
       </div>
 
       <div class="form-card">
@@ -160,21 +201,8 @@
       </div>
 
       <div class="form-card">
-        <div class="section-label"><span>▸ PHYSICAL EXAMINATION ( PERTINENT FINDINGS PER SYSTEM )</span><div class="rule"></div></div>
-        <div class="checkbox-grid">
-          <label class="checkbox-row"><input type="checkbox" id="heentNormal" /> HEENT — Essentially normal</label>
-          <label class="checkbox-row"><input type="checkbox" id="chestLungsNormal" /> Chest/Lungs — Essentially normal</label>
-          <label class="checkbox-row"><input type="checkbox" id="cvsNormal" /> CVS — Essentially normal</label>
-          <label class="checkbox-row"><input type="checkbox" id="abdomenNormal" /> Abdomen — Essentially normal</label>
-          <label class="checkbox-row"><input type="checkbox" id="skinExtremitiesNormal" /> Skin/Extremities — Essentially normal</label>
-          <label class="checkbox-row"><input type="checkbox" id="neuroExamNormal" /> Neuro-exam — Essentially normal</label>
-        </div>
-
-        <div class="checkbox-with-text">
-          <label class="checkbox-row"><input type="checkbox" id="guOthers" /> GU (IE) — Others</label>
-          <input type="text" id="guOthersText" class="card" placeholder="Remarks (e.g. NOT EXAMINE)" />
-        </div>
-        <div class="hint">Remarks only apply when "GU (IE) — Others" is checked.</div>
+        <div class="section-label"><span>▸ 5. PHYSICAL EXAMINATION ( PERTINENT FINDINGS PER SYSTEM )</span><div class="rule"></div></div>
+        <div id="physicalExamSections"></div>
       </div>
 
       <div class="form-card">
@@ -203,4 +231,4 @@
   <script src="js/common.js"></script>
   <script src="js/cf4.js"></script>
 </body>
-</html> 
+</html>
