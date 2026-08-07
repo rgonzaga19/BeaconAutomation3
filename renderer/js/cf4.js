@@ -13,12 +13,14 @@
  * The "Pertinent Signs and Symptoms" and "Physical Examination" sections
  * are built here from SYMPTOM_COLUMNS / PHYSICAL_EXAM_SECTIONS rather
  * than written out by hand in cf4.html, so the *settings keys* below are
- * the single source of truth. Those keys — and the guessed DOM `name`
- * attributes beacon.py checks against live Beacon (which live in
- * beacon.py, not here) — were guessed from screenshots of the live CF4
- * form, not read from Beacon's source. If any turn out wrong, this is
- * the only place the settings-side key needs correcting; beacon.py's
- * matching DEFAULT_CF4_DATA key and locator need the same fix there.
+ * the single source of truth. For those two sections, each key now IS
+ * the confirmed Beacon `name` attribute (camelCase) — beacon.py reads
+ * cf4_data[key] and locates input[name="key"] directly, no separate
+ * translation table. The handful of hand-written fields (chief_complaint,
+ * history_of_present_illness, pertinent_past_medical_history,
+ * general_survey_awake_alert, course_in_ward_order) stay snake_case,
+ * since they're settings-only concepts, not 1:1 with a single checkbox
+ * name.
  *
  * Assumes the same `window.beabots` preload bridge as dashboard.js
  * (minimize/maximize/close window chrome) — see dashboard.js's header
@@ -154,8 +156,8 @@ const PHYSICAL_EXAM_SECTIONS = [
       { key: "seWeakPulse", label: "Weak pulses" },
       { key: "seCyanosisMottledSkin", label: "Cyanosis/mottled skin" },
       { key: "seOthersChk", label: "Others", specifyKey: "seOthers" },
-      { key: "se_edema_swelling", label: "Edema/swelling" },
-      { key: "seEdemaSwelling", label: "Decreased mobility" },
+      { key: "seEdemaSwelling", label: "Edema/swelling" },
+      { key: "seDecreasedMobility", label: "Decreased mobility" },
       { key: "sePaleNailbeds", label: "Pale nailbeds" },
     ],
   },
@@ -176,11 +178,16 @@ const PHYSICAL_EXAM_SECTIONS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Defaults — mirrors DEFAULT_CF4_SETTINGS in server.py exactly (same keys,
-// same values). "Essentially normal" boxes, Body weakness, Lower
-// extremity edema, and GU (IE) Others default checked, matching what
-// beacon.py's auto-encode step always did before this screen existed;
-// every other symptom/finding defaults unchecked.
+// Defaults — mirrors DEFAULT_CF4_SETTINGS in server.py and DEFAULT_CF4_DATA
+// in beacon.py exactly (same keys, same values). These settings keys now
+// ARE the confirmed Beacon `name` attributes (camelCase) — see
+// SYMPTOM_COLUMNS / PHYSICAL_EXAM_SECTIONS above — so beacon.py no longer
+// needs a separate settings-key -> DOM-name translation for these
+// checkboxes; it reads cf4_data[key] and locates input[name="key"]
+// directly. "Essentially normal" boxes, Body weakness, Lower extremity
+// edema, and GU (IE) Others default checked, matching what beacon.py's
+// auto-encode step always did before this screen existed; every other
+// symptom/finding defaults unchecked.
 // ---------------------------------------------------------------------------
 const DEFAULT_CF4_SETTINGS = {
   chief_complaint: "FOR HEMODIALYSIS",
@@ -190,13 +197,13 @@ const DEFAULT_CF4_SETTINGS = {
   course_in_ward_order: "UF GOAL MET AT L",
 
   // Pertinent Signs and Symptoms
-  altered_mental_sensorium: false,
-  abdominal_cramp_pain: false,
+  alteredMentalSensorium: false,
+  abdominalCrampPain: false,
   anorexia: false,
-  bleeding_gums: false,
-  body_weakness: true,
-  blurring_vision: false,
-  chest_pain_discomfort: false,
+  bleedingGums: false,
+  bodyWeakness: true,
+  blurringOfVision: false,
+  chestPainDiscomfort: false,
   constipation: false,
   cough: false,
   diarrhea: false,
@@ -206,107 +213,107 @@ const DEFAULT_CF4_SETTINGS = {
   dysuria: false,
   epistaxis: false,
   fever: false,
-  frequency_of_urination: false,
+  frequencyOfUrination: false,
   headache: false,
   hematemesis: false,
   hematuria: false,
   hemoptysis: false,
   irritability: false,
   jaundice: false,
-  lower_extremity_edema: true,
+  lowerExtremityEdema: true,
   myalgia: false,
   orthopnea: false,
   pain: false,
-  pain_specify: "",
+  painSpecify: "",
   palpitations: false,
-  seizures: false,
-  skin_rashes: false,
-  stool_bloody_black_tarry_mucoid: false,
+  seizure: false,
+  skinRashes: false,
+  stoolBloodyBlackTarryMucoid: false,
   sweating: false,
   urgency: false,
   vomiting: false,
-  weight_loss: false,
+  weightLoss: false,
   others: false,
-  others_specify: "",
+  othersSpecify: "",
 
   // Physical Examination — HEENT
-  he_essentially_normal: true,
-  he_sunken_fontanelle: false,
-  he_abnormal_pupillary_reaction: false,
-  he_others: false,
-  he_others_text: "",
-  he_cervical_lymphadenopathy: false,
-  he_dry_mucous_membrane: false,
-  he_icteric_sclerae: false,
-  he_pale_conjunctivae: false,
-  he_sunken_eyeballs: false,
+  heEssentiallyNormal: true,
+  heSunkenFontanelle: false,
+  heAbnormalPupillaryReaction: false,
+  heOthersChk: false,
+  heOthers: "",
+  heCervicalLympadenopathy: false,
+  heDryMucousMembrane: false,
+  heIctericSclerae: false,
+  hePaleConjunctivae: false,
+  heSunkenEyeballs: false,
 
   // Physical Examination — Chest / Lungs
-  cl_essentially_normal: true,
-  cl_others: false,
-  cl_others_text: "",
-  cl_asymmetrical_chest_expansion: false,
-  cl_decreased_breath_sounds: false,
-  cl_wheezes: false,
-  cl_lumps_over_breasts: false,
-  cl_rales_crackles_rhonchi: false,
-  cl_intercostal_rib_retraction: false,
+  clEssentiallyNormal: true,
+  clOthersChk: false,
+  clOthers: "",
+  clAsymmetricalChestExpansion: false,
+  clDecreasedBreathSounds: false,
+  clWheezes: false,
+  clLumpsOverBreast: false,
+  clCracklesRales: false,
+  clRetractions: false,
 
   // Physical Examination — CVS
-  cv_essentially_normal: true,
-  cv_others: false,
-  cv_others_text: "",
-  cv_displaced_apex_beat: false,
-  cv_heave_and_or_thrills: false,
-  cv_pericardial_bulge: false,
-  cv_irregular_rhythm: false,
-  cv_muffled_heart_sounds: false,
-  cv_murmur: false,
+  cvEssentiallyNormal: true,
+  cvOthersChk: false,
+  cvOthers: "",
+  cvDisplacedApexBeat: false,
+  cvHeavesThrills: false,
+  cvPericardialBulge: false,
+  cvIrregularRhythm: false,
+  cvMuffledHeartSounds: false,
+  cvMurmur: false,
 
   // Physical Examination — Abdomen
-  ab_essentially_normal: true,
-  ab_others: false,
-  ab_others_text: "",
-  ab_abdominal_rigidity: false,
-  ab_abdominal_tenderness: false,
-  ab_hyperactive_bowel_sounds: false,
-  ab_palpable_masses: false,
-  ab_tympanitic_dull_abdomen: false,
-  ab_uterine_contraction: false,
+  abEssentiallyNormal: true,
+  abOthersChk: false,
+  abOthers: "",
+  abAbdominalRigidity: false,
+  abAbdominalTenderness: false,
+  abHyperactiveBowelSounds: false,
+  abPalpableMasses: false,
+  abTympaniticDullAbdomen: false,
+  abUterineContraction: false,
 
   // Physical Examination — GU (IE)
-  gu_essentially_normal: false,
-  gu_blood_stained_in_examining_finger: false,
-  gu_cervical_dilatation: false,
-  gu_presence_of_abnormal_discharge: false,
-  gu_others: true,
-  gu_others_text: "NOT EXAMINE",
+  guEssentiallyNormal: false,
+  guBloodStainedInExamFinger: false,
+  guCervicalDilatation: false,
+  guPresenceofAbnormalDischarge: false,
+  guOthersChk: true,
+  guOthers: "NOT EXAMINE",
 
   // Physical Examination — Skin/Extremities
-  se_essentially_normal: true,
-  se_poor_skin_turgor: false,
-  se_clubbing: false,
-  se_rashes_petechiae: false,
-  se_cold_clammy_skin: false,
-  se_weak_pulses: false,
-  se_cyanosis_mottled_skin: false,
-  se_others: false,
-  se_others_text: "",
-  se_edema_swelling: false,
-  se_decreased_mobility: false,
-  se_pale_nailbeds: false,
+  seEssentiallyNormal: true,
+  sePoorSkinTurgor: false,
+  seClubbing: false,
+  seRashesPetechiae: false,
+  seColdClammy: false,
+  seWeakPulse: false,
+  seCyanosisMottledSkin: false,
+  seOthersChk: false,
+  seOthers: "",
+  seEdemaSwelling: false,
+  seDecreasedMobility: false,
+  sePaleNailbeds: false,
 
   // Physical Examination — Neuro-exam
-  ne_essentially_normal: true,
-  ne_poor_coordination: false,
-  ne_abnormal_gait: false,
-  ne_others: false,
-  ne_others_text: "",
-  ne_abnormal_position_sense: false,
-  ne_abnormal_sensation: false,
-  ne_presence_of_abnormal_reflexes: false,
-  ne_poor_altered_memory: false,
-  ne_poor_muscle_tone_strength: false,
+  neEssentiallyNormal: true,
+  nePoorCoordination: false,
+  neAbnormalGait: false,
+  neOthersChk: false,
+  neOthers: "",
+  neAbnormalPositionSense: false,
+  neAbnormalSensation: false,
+  neAbnormalReflexes: false,
+  nePoorAlteredMemory: false,
+  nePoorMuscleToneStrength: false,
 };
 
 // ---------------------------------------------------------------------------
