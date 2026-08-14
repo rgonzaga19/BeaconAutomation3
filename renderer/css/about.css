@@ -46,6 +46,54 @@
     padding: 12px 14px 10px 14px;
 }
 
+/* ---------- About text ---------- */
+.about-text {
+    padding: 0 14px 12px 14px;
+}
+
+.about-text p {
+    margin: 0;
+    color: var(--text-sec);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+/* ---------- Feature list ---------- */
+.feature-list {
+    list-style: none;
+    margin: 8px 14px 4px 14px;
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+
+.feature-list li {
+    color: var(--text-pri);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.7;
+    padding-left: 14px;
+    position: relative;
+}
+
+.feature-list li strong {
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.feature-list li::before {
+    content: "›";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: bold;
+}
+
+.feature-list li:not(:last-child) {
+    margin-bottom: 5px;
+}
+
 /* ---------- Info rows (label left, value right) ---------- */
 .info-grid {
     padding: 0 14px;
