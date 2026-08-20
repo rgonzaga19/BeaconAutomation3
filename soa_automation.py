@@ -43,15 +43,6 @@ def _strip_name_suffixes(tokens):
     Removes generational suffix tokens like "JR"/"SR"/"II" through "X"
     (with or without a trailing period, e.g. "JR." or "III.") from a
     list of name tokens before surname/given splitting runs.
-
-    _split_surname_and_given() assumes the *last* token is the surname.
-    Beacon's patient_name puts a suffix like "JR" right after the
-    surname — e.g. "JUAN DELA CRUZ JR" — so without this, the suffix
-    itself got treated as the whole surname ("JR") and "DELA CRUZ" was
-    left behind as if it were part of the given name, which then made
-    the SOA filename search key on the wrong name entirely. Stripping is
-    done across all tokens (not just the final one) so a stray suffix
-    elsewhere in the string can't confuse the split either.
     """
     return [t for t in tokens if t.rstrip(".") not in NAME_SUFFIXES]
 
@@ -66,13 +57,7 @@ def _split_surname_and_given(name):
     the particle to the given-name side.
 
     A hyphen in the last word (e.g. "ONG-HAY") is treated the same way —
-    both halves are always kept together as one compound surname. This
-    matters because filenames get tokenized by splitting on any
-    non-alphanumeric character (so "ONG-HAY.xlsx" becomes ["ONG","HAY"]),
-    and without this, "ONG-HAY" would stay glued into one literal string
-    containing the hyphen, which could never equal either of those
-    filename tokens — so a hyphenated-surname patient's file would never
-    be found no matter how it was named.
+    both halves are always kept together as one compound surname.
     """
     tokens = name.upper().split()
     tokens = _strip_name_suffixes(tokens)
@@ -107,6 +92,7 @@ def _normalize(text):
     text = text.upper()
     return re.sub(r"[^A-Z0-9Ñ]", "", text)
 
+
 def _filename_tokens(filename):
     """
     Returns normalized filename tokens.
@@ -129,14 +115,6 @@ def _wait_for_count(page, locator, min_count=1, timeout_ms=15000, poll_ms=300):
     """
     Polls locator.count() until it reaches at least min_count, or the
     timeout elapses. Returns the final count either way.
-
-    Beacon's pages are React-rendered, so a fixed wait_for_timeout() has
-    to guess how long something takes to appear — too short and it reads
-    an empty/stale DOM, too long and it wastes time on the common case.
-    This instead waits for the actual thing to show up, which matters
-    most exactly when it's slow (e.g. a large SOA file taking longer to
-    process server-side before the Statement of Account modal populates
-    its rows).
     """
     elapsed = 0
     count = locator.count()
@@ -151,25 +129,8 @@ def _wait_for_count(page, locator, min_count=1, timeout_ms=15000, poll_ms=300):
 
 def _type_into_number_field(page, locator, value, max_attempts=3):
     """
-    Reliably enters a value into one of Beacon's Summary/Professional Fees
+    Reliably enters a value into Beacon's Summary/Professional Fees
     number-spinner inputs.
-
-    These are React-controlled fields with two known quirks:
-
-    1. Clicking one and typing right after can outrun the field actually
-       becoming interactive, which silently drops the first keystrokes
-       (e.g. typing "1540" lands as just "40" because the field wasn't
-       ready to accept input yet).
-    2. The typed value can look correct immediately afterward, but then
-       silently snap back to 0 once focus moves to a different field —
-       Beacon appears to only commit the value on blur, and that commit
-       occasionally discards what was typed. Blurring the field
-       ourselves right after typing (via Tab, the same thing a real user
-       tabbing to the next field would do) and re-reading the value
-       *after* that blur — instead of only right after typing — catches
-       this before we move on, rather than only discovering it later
-       once we're back at the Save button with every discount reset to
-       zero.
     """
     target_value = f"{value:.2f}"
 
@@ -177,16 +138,12 @@ def _type_into_number_field(page, locator, value, max_attempts=3):
         locator.scroll_into_view_if_needed()
         locator.click(force=True)
 
-        # Let the field finish becoming interactive/typable before typing.
         page.wait_for_timeout(200)
 
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
         locator.type(target_value, delay=50)
 
-        # Force the same commit a real user tabbing away would trigger,
-        # then re-read the value AFTER that commit — this is where the
-        # field has been observed to snap back to 0.
         page.keyboard.press("Tab")
         page.wait_for_timeout(150)
 
@@ -199,7 +156,6 @@ def _type_into_number_field(page, locator, value, max_attempts=3):
             f"got '{actual}' after blur — retrying"
         )
 
-    # Last resort: set the value directly instead of via keystrokes.
     locator.click(force=True)
     locator.fill(target_value)
     page.keyboard.press("Tab")
@@ -230,9 +186,6 @@ def open_transmittals(page):
 
     page.wait_for_load_state("networkidle")
 
-    # Wait until the search box is not only visible but also enabled.
-    # Beacon sometimes renders a disabled search field first while React
-    # is still hydrating the page.
     max_attempts = 3
 
     for attempt in range(max_attempts):
@@ -246,7 +199,6 @@ def open_transmittals(page):
                 timeout=8000
             )
 
-            # Verify we can actually interact with it.
             search_box.scroll_into_view_if_needed()
             search_box.click(timeout=5000)
             search_box.fill("")
@@ -273,7 +225,7 @@ def open_transmittals(page):
 class SOAAutomation:
     """Handles automated SOA (Statement of Accounts) upload workflow."""
 
-    def __init__(self, soa_folder=None):
+    def __init__(self, soa_folder=None, max_retries=2):
         self.page = None
         self.results = []
         self.patient_birthdate = None
@@ -281,7 +233,12 @@ class SOAAutomation:
         self.patient_name = None
         self.soa_file = None
         self.soa_folder = Path(soa_folder) if soa_folder else DEFAULT_SOA_FOLDER
-    
+
+        # Step 3:
+        # max_retries is the number of RETRIES after the initial attempt.
+        # max_retries=2 means at most 3 processing attempts total.
+        self.max_retries = max(0, int(max_retries))
+
     def _cancel_upload_confirmation(self):
         try:
             cancel_btn = self.page.locator("button").filter(has_text="Cancel").first
@@ -294,8 +251,126 @@ class SOAAutomation:
         except Exception:
             pass
 
+    def _recover_transmittal(self, transmittal_no):
+        """
+        Recover from any error/timeout while processing a transmittal.
+
+        Recovery sequence:
+        1. Reload the current page.
+        2. Wait for the page to settle.
+        3. Return to TRANSMITTALS & CLAIMS.
+        4. Search for the same transmittal again.
+
+        Returns True if the transmittal search page is restored and the
+        transmittal is found again, otherwise False.
+        """
+        try:
+            transmittal_no = str(transmittal_no).strip()
+
+            logger.warning(
+                f"RECOVERY: Attempting to recover transmittal "
+                f"'{transmittal_no}'..."
+            )
+
+            logger.info("RECOVERY: Reloading current page...")
+
+            self.page.reload(
+                wait_until="domcontentloaded",
+                timeout=30000
+            )
+
+            try:
+                self.page.wait_for_load_state(
+                    "networkidle",
+                    timeout=15000
+                )
+            except Exception:
+                logger.warning(
+                    "RECOVERY: Network did not reach idle state. "
+                    "Continuing anyway."
+                )
+
+            self.page.wait_for_timeout(1500)
+
+            logger.info(
+                "RECOVERY: Returning to TRANSMITTALS & CLAIMS..."
+            )
+
+            open_transmittals(self.page)
+
+            logger.info(
+                f"RECOVERY: Searching transmittal '{transmittal_no}' again..."
+            )
+
+            search_box = self.page.locator(
+                'input[type="text"]:not([disabled])'
+            ).first
+
+            search_box.wait_for(
+                state="visible",
+                timeout=10000
+            )
+
+            search_box.scroll_into_view_if_needed()
+            search_box.click()
+
+            search_box.press("Control+A")
+            search_box.press("Backspace")
+
+            search_box.fill(transmittal_no)
+            search_box.press("Enter")
+
+            try:
+                self.page.wait_for_load_state(
+                    "networkidle",
+                    timeout=15000
+                )
+            except Exception:
+                logger.warning(
+                    "RECOVERY: Search did not reach networkidle. "
+                    "Checking rows anyway."
+                )
+
+            self.page.wait_for_timeout(1000)
+
+            row_count = _wait_for_count(
+                self.page,
+                self.page.locator("tbody tr"),
+                min_count=1,
+                timeout_ms=10000,
+                poll_ms=500
+            )
+
+            if row_count <= 0:
+                logger.error(
+                    f"RECOVERY FAILED: Transmittal "
+                    f"'{transmittal_no}' was not found after recovery."
+                )
+                return False
+
+            logger.success(
+                f"RECOVERY SUCCESS: Transmittal "
+                f"'{transmittal_no}' is available again."
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"RECOVERY FAILED for transmittal "
+                f"'{transmittal_no}': {e}"
+            )
+            return False
+
     def process_transmittal(self, transmittal_no, idx, total):
-        """Process a single transmittal for SOA upload."""
+        """
+        Process ONE attempt for a single transmittal.
+
+        Important for Step 3:
+        This method does NOT retry recursively. If an exception occurs,
+        it attempts recovery of the SAME transmittal and returns FAILED.
+        run() owns the retry counter and decides whether to try again.
+        """
         result = {
             "transmittal": transmittal_no,
             "status": "failed",
@@ -328,22 +403,18 @@ class SOAAutomation:
 
                     search_box.scroll_into_view_if_needed()
 
-                    # Ensure the field has focus
                     search_box.click()
                     self.page.wait_for_timeout(300)
 
-                    # Clear any previous search
                     search_box.press("Control+A")
                     self.page.wait_for_timeout(100)
                     search_box.press("Backspace")
                     self.page.wait_for_timeout(200)
 
-                    # Enter the transmittal number
                     search_box.fill(transmittal_no)
                     self.page.wait_for_timeout(300)
                     search_box.press("Enter")
 
-                    # Wait for Beacon to finish searching
                     self.page.wait_for_load_state("networkidle")
                     self.page.wait_for_timeout(500)
 
@@ -381,7 +452,6 @@ class SOAAutomation:
                 result["status"] = "skipped"
                 result["message"] = "Transmittal not found"
 
-                self.results.append(result)
                 return result
 
             logger.success(f"Transmittal '{transmittal_no}' found successfully")
@@ -431,7 +501,10 @@ class SOAAutomation:
             logger.success("SUCCESS: PHIC Claim Details opened")
 
             # ── Validate Eligibility (if button appears) ───────────────────
-            validate_btn = self.page.locator("button", has_text="Validate Eligibility")
+            validate_btn = self.page.locator(
+                "button",
+                has_text="Validate Eligibility"
+            )
 
             if validate_btn.count() > 0:
                 logger.info("Clicking Validate Eligibility...")
@@ -442,7 +515,6 @@ class SOAAutomation:
                 logger.info("No validation required — skipping.")
 
             # ── Get Patient Birthday and Compute Age ───────────────────────
-
             logger.info("Reading patient birthday...")
 
             birthday_text = self.page.locator(
@@ -451,11 +523,16 @@ class SOAAutomation:
 
             logger.info(f"Birthday: {birthday_text}")
 
-            birth_date = datetime.strptime(birthday_text, "%B %d, %Y").date()
+            birth_date = datetime.strptime(
+                birthday_text,
+                "%B %d, %Y"
+            ).date()
+
             today = datetime.today().date()
 
             age = today.year - birth_date.year - (
-                (today.month, today.day) < (birth_date.month, birth_date.day)
+                (today.month, today.day) <
+                (birth_date.month, birth_date.day)
             )
 
             self.patient_birthdate = birth_date
@@ -463,8 +540,7 @@ class SOAAutomation:
 
             logger.success(f"Patient Age = {self.patient_age}")
 
-            # ── Get the Patient Name ─────────────────────────────────────────
-
+            # ── Get the Patient Name ─────────────────────────────────────
             patient_name = self.page.locator(
                 "//td[normalize-space()='Patient Name']/following-sibling::td"
             ).inner_text().strip()
@@ -474,9 +550,6 @@ class SOAAutomation:
             self.patient_name = patient_name
 
             # ── Check CHARGES tab for existing items ────────────────────────
-            # Guards against uploading a second SOA to a transmittal/patient
-            # that has already been processed.
-
             logger.info("Checking CHARGES tab for existing items...")
 
             self.page.get_by_role(
@@ -487,7 +560,6 @@ class SOAAutomation:
 
             self.page.wait_for_load_state("networkidle")
 
-            # Wait until the table itself is rendered.
             try:
                 charges_table = self.page.locator("tbody")
                 charges_table.wait_for(
@@ -497,7 +569,6 @@ class SOAAutomation:
             except Exception:
                 pass
 
-            # Give React a little extra time to finish rendering rows.
             self.page.wait_for_timeout(2000)
 
             logger.info("Searching for existing MED charge items...")
@@ -516,14 +587,12 @@ class SOAAutomation:
                     try:
                         item = med_items.nth(i)
 
-                        # Ignore hidden DOM elements.
                         if not item.is_visible():
                             continue
 
                         title = (item.get_attribute("title") or "").strip()
                         text = (item.inner_text() or "").strip()
 
-                        # Ignore placeholder cells.
                         if not title and not text:
                             continue
 
@@ -565,8 +634,6 @@ class SOAAutomation:
                     f"item(s) — SOA already uploaded."
                 )
 
-                self.results.append(result)
-
                 is_last = (idx == total - 1)
 
                 if not is_last:
@@ -582,7 +649,6 @@ class SOAAutomation:
             )
 
             # ── Open PAYMENTS tab ─────────────────────────────────
-
             logger.info("Opening PAYMENTS tab...")
 
             self.page.get_by_role("link", name="PAYMENTS").click()
@@ -591,9 +657,8 @@ class SOAAutomation:
 
             logger.success("PAYMENTS tab opened")
 
-            # ── Upload Statement of Account ───────────────────────────────────────────
+            # ── Upload Statement of Account ───────────────────────────
             logger.info("Opening Statement of Account upload...")
-
             logger.info("Clicking Upload Charges and Payment...")
 
             self.page.get_by_role(
@@ -601,31 +666,32 @@ class SOAAutomation:
                 name="UPLOAD CHARGES AND PAYMENT"
             ).click()
 
-            # The upload modal/input can take a moment to mount — wait for
-            # the file input to actually attach instead of guessing with a
-            # fixed sleep, since that's what caused missed fields further
-            # down the line when the modal was slow to appear.
             try:
                 self.page.wait_for_selector(
-                    "input[type='file']", state="attached", timeout=10000
+                    "input[type='file']",
+                    state="attached",
+                    timeout=10000
                 )
             except Exception:
                 pass
 
             logger.success("Upload Charges and Payment clicked")
 
-            # -------------------------------------------------------------------------
-            # Locate the SOA file automatically
-            # -------------------------------------------------------------------------
-
+            # ── Locate SOA file automatically ─────────────────────────
             surname_tokens, given_tokens = _split_surname_and_given(
                 self.patient_name
             )
 
-            surname_key = _normalize("".join(surname_tokens))          # e.g. "DEOCAMPO"
-            bare_surname_key = _normalize(surname_tokens[-1]) if surname_tokens else ""  # e.g. "OCAMPO"
-            given_key = _normalize("".join(given_tokens))              # e.g. "JUANCRUZ"
-            given_initial = _normalize(given_tokens[0])[:1] if given_tokens else ""
+            surname_key = _normalize("".join(surname_tokens))
+            bare_surname_key = (
+                _normalize(surname_tokens[-1])
+                if surname_tokens else ""
+            )
+            given_key = _normalize("".join(given_tokens))
+            given_initial = (
+                _normalize(given_tokens[0])[:1]
+                if given_tokens else ""
+            )
 
             logger.info(f"Searching SOA in: {self.soa_folder}")
             logger.info(
@@ -639,6 +705,7 @@ class SOAAutomation:
                 )
 
             all_files = []
+
             for pattern in ("*.xlsx", "*.xls"):
                 all_files.extend(self.soa_folder.glob(pattern))
 
@@ -646,30 +713,6 @@ class SOAAutomation:
                 """
                 Looks for tokens_to_match as a consecutive, whole-word run
                 inside each filename's tokens.
-
-                require_exact_length=True additionally rejects a match if
-                the token immediately before the match is itself a surname
-                particle (DE/DEL/SAN/etc.). That guards against a shorter
-                patient surname (e.g. "RESUS") falsely matching inside a
-                filename whose real surname is longer and compound (e.g.
-                "DE RESUS.xlsx", which likely belongs to a different
-                patient whose actual surname is "DE RESUS", not "RESUS").
-                Without this, a patient named plain "RESUS" and a filename
-                "DE RESUS.xlsx" belonging to someone else both match on
-                the token "RESUS", creating an ambiguity that shouldn't
-                exist.
-
-                Independently of that flag, a match is always rejected if
-                it's immediately FOLLOWED by more non-numeric filename
-                content — unless that trailing content is this patient's
-                own given name/initial. This is the mirror-image problem:
-                a plain surname like "ONG" would otherwise match inside
-                "ONG-HAY.xlsx" (tokenized as ["ONG","HAY"], since a hyphen
-                is a separator just like a space), even though "ONG-HAY"
-                is a different, longer surname that just happens to start
-                the same way. A trailing given name/initial is still
-                allowed through, since that's a legitimate disambiguating
-                filename convention (e.g. "DELA CRUZ JUAN.xlsx").
                 """
                 if not tokens_to_match:
                     return []
@@ -678,26 +721,35 @@ class SOAAutomation:
                 matches = []
 
                 allowed_after = set(given_tokens)
+
                 if given_initial:
                     allowed_after.add(given_initial)
 
                 for f in all_files:
                     tokens = _filename_tokens(f.name)
 
-                    # Look for consecutive whole-word matches
-                    for i in range(len(tokens) - len(tokens_to_match) + 1):
-                        if tokens[i:i + len(tokens_to_match)] != tokens_to_match:
+                    for i in range(
+                        len(tokens) - len(tokens_to_match) + 1
+                    ):
+                        if tokens[
+                            i:i + len(tokens_to_match)
+                        ] != tokens_to_match:
                             continue
 
                         if require_exact_length:
                             preceding = tokens[i - 1] if i > 0 else None
+
                             if preceding in SURNAME_PARTICLES:
                                 continue
 
                         after_idx = i + len(tokens_to_match)
+
                         following = (
-                            tokens[after_idx] if after_idx < len(tokens) else None
+                            tokens[after_idx]
+                            if after_idx < len(tokens)
+                            else None
                         )
+
                         if following is not None and not following.isdigit():
                             if following not in allowed_after:
                                 continue
@@ -712,15 +764,19 @@ class SOAAutomation:
                 Returns True if the given name (or initial) is immediately
                 before or after the matched surname as whole words.
                 """
-
                 tokens = _filename_tokens(filename)
 
-                for i in range(len(tokens) - len(surname_tokens) + 1):
+                for i in range(
+                    len(tokens) - len(surname_tokens) + 1
+                ):
 
-                    if tokens[i:i + len(surname_tokens)] != surname_tokens:
+                    if tokens[
+                        i:i + len(surname_tokens)
+                    ] != surname_tokens:
                         continue
 
                     before = tokens[i - 1] if i > 0 else None
+
                     after = (
                         tokens[i + len(surname_tokens)]
                         if i + len(surname_tokens) < len(tokens)
@@ -728,74 +784,69 @@ class SOAAutomation:
                     )
 
                     if given_tokens:
-                        if before == given_tokens[0] or after == given_tokens[0]:
+                        if (
+                            before == given_tokens[0]
+                            or after == given_tokens[0]
+                        ):
                             return True
 
                     if given_initial:
-                        if before == given_initial or after == given_initial:
+                        if (
+                            before == given_initial
+                            or after == given_initial
+                        ):
                             return True
 
                 return False
 
-            # 1) Priority: exact-length surname match (compound-aware, e.g.
-            #    "DEOCAMPO"). The matched span must NOT be immediately
-            #    preceded by another particle — otherwise the filename's
-            #    real surname is longer/compound relative to what we
-            #    extracted for this patient (e.g. patient surname "RESUS"
-            #    should not match "DE RESUS.xlsx", since that file's true
-            #    surname is the compound "DE RESUS" and likely belongs to
-            #    a different patient).
-            matches = _matching(surname_tokens, require_exact_length=True)
+            # 1) Priority: exact-length surname match
+            matches = _matching(
+                surname_tokens,
+                require_exact_length=True
+            )
 
-            # 2) Fallback: loose surname match, ignoring what precedes it.
-            #    Covers cases where our own particle-detection logic didn't
-            #    recognize a genuine compound surname (e.g. an uncommon
-            #    particle not listed in SURNAME_PARTICLES).
+            # 2) Fallback: loose surname match
             if not matches:
                 loose_matches = _matching(surname_tokens)
+
                 if loose_matches:
                     logger.info(
-                        f"No exact-length match for surname '{surname_key}' "
-                        f"— falling back to loose match: "
+                        f"No exact-length match for surname "
+                        f"'{surname_key}' — falling back to loose match: "
                         f"{[f.name for f in loose_matches]}"
                     )
+
                 matches = loose_matches
 
-            # 3) Fallback: surname without the leading particle, in case the
-            #    filename dropped "DE"/"DEL"/etc. (e.g. just "OCAMPO.xlsx").
-            #    Exact-length is tried first here too, so a bare-surname
-            #    fallback can't accidentally match a different compound-
-            #    surname file (e.g. "OCAMPO" incorrectly matching inside
-            #    "DE OCAMPO.xlsx" when that file belongs to someone else).
+            # 3) Fallback: surname without leading particle
             if not matches and bare_surname_key != surname_key:
+
                 logger.info(
                     f"No match for full surname '{surname_key}' — "
                     f"trying bare surname '{bare_surname_key}'"
                 )
-                matches = _matching(
-                    [surname_tokens[-1]], require_exact_length=True
-                )
-                if not matches:
-                    matches = _matching([surname_tokens[-1]])
 
-            # No exact surname match at all (full or bare) — do NOT fall back
-            # to searching by given name alone, since a given-name-only match
-            # says nothing about whether it's the right person's surname.
-            # It's better to skip the transmittal than upload the wrong file.
+                matches = _matching(
+                    [surname_tokens[-1]],
+                    require_exact_length=True
+                )
+
+                if not matches:
+                    matches = _matching(
+                        [surname_tokens[-1]]
+                    )
+
             if not matches:
                 raise Exception(
                     f"No SOA file found for patient '{self.patient_name}': "
-                    f"no filename matched surname '{' '.join(surname_tokens)}' "
+                    f"no filename matched surname "
+                    f"'{' '.join(surname_tokens)}' "
                     f"(or bare surname '{bare_surname_key}') "
                     f"inside {self.soa_folder}. Skipping — will not guess."
                 )
 
-            # If several files share the same surname (e.g. two patients with
-            # the same last name), narrow down using the given name / initial.
-            # If narrowing doesn't land on exactly one file, stop and raise —
-            # do not fall back to "most recent" or any other closest-match
-            # guess, since that risks uploading the wrong patient's SOA.
             if len(matches) > 1:
+
                 narrowed = [
                     f for f in matches
                     if _has_given_name_marker(f.name)
@@ -806,9 +857,10 @@ class SOAAutomation:
                         f"Multiple SOA files matched surname "
                         f"'{' '.join(surname_tokens)}' "
                         f"({[f.name for f in matches]}) but none could be "
-                        f"confirmed against given name '{' '.join(given_tokens)}'. "
-                        "Skipping — will not guess which file belongs to "
-                        "this patient."
+                        f"confirmed against given name "
+                        f"'{ ' '.join(given_tokens) }'. "
+                        "Skipping — will not guess which file belongs "
+                        "to this patient."
                     )
 
                 if len(narrowed) > 1:
@@ -821,26 +873,28 @@ class SOAAutomation:
 
                 logger.info(
                     f"Multiple files matched surname "
-                    f"'{' '.join(surname_tokens)}' — narrowed to a single "
-                    "exact match using given name"
+                    f"'{ ' '.join(surname_tokens) }' — narrowed to a "
+                    f"single exact match using given name"
                 )
+
                 matches = narrowed
 
-            logger.info(f"Candidate SOA files: {[f.name for f in matches]}")
+            logger.info(
+                f"Candidate SOA files: {[f.name for f in matches]}"
+            )
 
-            # Exactly one confirmed match at this point.
             soa_file = matches[0]
 
             self.soa_file = str(soa_file)
 
             logger.success(f"SOA file found: {self.soa_file}")
 
-            # -------------------------------------------------------------------------
-            # Upload without using the Windows File Dialog
-            # -------------------------------------------------------------------------
-
+            # ── Upload without Windows File Dialog ────────────────────
             file_input = self.page.locator("input[type='file']")
-            logger.info(f"File inputs found: {file_input.count()}")
+
+            logger.info(
+                f"File inputs found: {file_input.count()}"
+            )
 
             if file_input.count() > 0:
 
@@ -848,20 +902,18 @@ class SOAAutomation:
 
                 file_input.set_input_files(self.soa_file)
 
-                # Larger SOA files take noticeably longer to process
-                # server-side — wait for network activity to settle
-                # instead of a fixed delay, so we don't race the
-                # "Statement of Account" button before the upload has
-                # actually finished.
                 try:
                     self.page.wait_for_load_state(
-                        "networkidle", timeout=20000
+                        "networkidle",
+                        timeout=20000
                     )
                 except Exception:
                     pass
+
                 self.page.wait_for_timeout(500)
 
                 logger.success("SOA uploaded successfully.")
+
                 result["status"] = "success"
                 result["message"] = "SOA uploaded successfully"
 
@@ -880,27 +932,28 @@ class SOAAutomation:
 
                 try:
                     self.page.wait_for_load_state(
-                        "networkidle", timeout=20000
+                        "networkidle",
+                        timeout=20000
                     )
                 except Exception:
                     pass
+
                 self.page.wait_for_timeout(500)
 
                 logger.success("SOA uploaded successfully.")
 
-            
             # ── Open Statement of Account ───────────────────────────────
-
             logger.info("Opening Statement of Account...")
 
             soa_button = self.page.locator(
                 "button:has(span:text('Statement of Account'))"
             )
 
-            # Wait generously — this button (and the modal it opens) can
-            # take a while to become available right after a large
-            # upload finishes processing.
-            soa_button.wait_for(state="visible", timeout=20000)
+            soa_button.wait_for(
+                state="visible",
+                timeout=20000
+            )
+
             soa_button.click()
 
             self.page.wait_for_timeout(1000)
@@ -910,29 +963,34 @@ class SOAAutomation:
             # ============================================================
             # Populate Senior Citizen / PWD Discount
             # ============================================================
-
             logger.info("Computing discounts...")
 
             is_senior = self.patient_age >= 60
-            target_prefix = "seniorCitizenDiscount" if is_senior else "pwdDiscount"
 
-            logger.info(f"Using {'Senior' if is_senior else 'PWD'} Discount")
+            target_prefix = (
+                "seniorCitizenDiscount"
+                if is_senior
+                else "pwdDiscount"
+            )
 
-            # Get all disabled Actual Charges (Summary section)
-            actual_inputs = self.page.locator("input[id^='actualCharges']:disabled")
-            discount_inputs = self.page.locator(f"input[id^='{target_prefix}']")
+            logger.info(
+                f"Using {'Senior' if is_senior else 'PWD'} Discount"
+            )
 
-            # The Summary/Professional Fees table can take a moment to
-            # render after the modal opens — especially with larger
-            # uploads. Poll for it instead of assuming it's already
-            # there: previously, reading actual_inputs.count() too early
-            # returned 0, so summary_rows came out as 0 and the entire
-            # discount loop below silently did nothing — no error, no
-            # warning, just a "successful" upload with every discount
-            # left blank.
+            actual_inputs = self.page.locator(
+                "input[id^='actualCharges']:disabled"
+            )
+
+            discount_inputs = self.page.locator(
+                f"input[id^='{target_prefix}']"
+            )
+
             actual_count = _wait_for_count(
-                self.page, actual_inputs,
-                min_count=1, timeout_ms=15000, poll_ms=300
+                self.page,
+                actual_inputs,
+                min_count=1,
+                timeout_ms=15000,
+                poll_ms=300
             )
 
             if actual_count == 0:
@@ -943,13 +1001,16 @@ class SOAAutomation:
                     "upload didn't parse as expected."
                 )
 
-            summary_rows = min(6, actual_count, discount_inputs.count())
+            summary_rows = min(
+                6,
+                actual_count,
+                discount_inputs.count()
+            )
 
-            logger.info(f"Processing {summary_rows} Summary rows")
+            logger.info(
+                f"Processing {summary_rows} Summary rows"
+            )
 
-            # Tracks every discount field we set, so we can do a final
-            # sweep right before Save and catch any that silently
-            # reverted back to 0 after we moved on to a later field.
             discount_targets = []
 
             for row in range(summary_rows):
@@ -960,44 +1021,73 @@ class SOAAutomation:
 
                     value = actual.input_value().strip()
 
-                    logger.info(f"Row {row}: actualCharges = '{value}'")
+                    logger.info(
+                        f"Row {row}: actualCharges = '{value}'"
+                    )
 
                     if not value:
                         continue
 
-                    amount = float(value.replace(",", ""))
+                    amount = float(
+                        value.replace(",", "")
+                    )
 
                     if amount == 0:
-                        logger.info(f"Row {row}: skipped (0)")
+                        logger.info(
+                            f"Row {row}: skipped (0)"
+                        )
                         continue
 
-                    discount = round(amount * 0.20, 2)
+                    discount = round(
+                        amount * 0.20,
+                        2
+                    )
 
-                    _type_into_number_field(self.page, target, discount)
-                    discount_targets.append((target, f"{discount:.2f}"))
+                    _type_into_number_field(
+                        self.page,
+                        target,
+                        discount
+                    )
+
+                    discount_targets.append(
+                        (
+                            target,
+                            f"{discount:.2f}"
+                        )
+                    )
 
                     logger.info(
                         f"Row {row}: {amount} -> {discount:.2f}"
                     )
 
                 except Exception as e:
-                    logger.warning(f"Row {row}: {e}")
+                    logger.warning(
+                        f"Row {row}: {e}"
+                    )
 
-            logger.success("Discount computation completed.")
-
+            logger.success(
+                "Discount computation completed."
+            )
 
             # ==========================================================
             # Populate Professional Fees
             # ==========================================================
-
-            logger.info("Computing Professional Fees...")
+            logger.info(
+                "Computing Professional Fees..."
+            )
 
             summary_total = sum(
-                float(actual_inputs.nth(i).input_value().replace(",", ""))
+                float(
+                    actual_inputs.nth(i)
+                    .input_value()
+                    .replace(",", "")
+                )
                 for i in range(summary_rows)
             )
 
-            logger.info(f"Summary Total = {summary_total}")
+            logger.info(
+                f"Summary Total = {summary_total}"
+            )
 
             pf_actual_map = {
                 7500: 437.50,
@@ -1009,66 +1099,114 @@ class SOAAutomation:
                 52500: 3062.50,
             }
 
-            pf_actual = pf_actual_map.get(summary_total)
+            pf_actual = pf_actual_map.get(
+                summary_total
+            )
 
             if pf_actual is None:
-                logger.warning(f"No Professional Fee mapping for {summary_total}")
+
+                logger.warning(
+                    f"No Professional Fee mapping for "
+                    f"{summary_total}"
+                )
+
             else:
 
-                pf_discount = round(pf_actual * 0.20, 2)
+                pf_discount = round(
+                    pf_actual * 0.20,
+                    2
+                )
 
-                logger.info(f"Professional Actual = {pf_actual}")
-                logger.info(f"Professional Discount = {pf_discount}")
+                logger.info(
+                    f"Professional Actual = {pf_actual}"
+                )
 
-                # second actualCharges0 belongs to Professional Fees
-                pf_actual_input = self.page.locator("input#actualCharges0").nth(1)
+                logger.info(
+                    f"Professional Discount = {pf_discount}"
+                )
+
+                pf_actual_input = self.page.locator(
+                    "input#actualCharges0"
+                ).nth(1)
 
                 if is_senior:
-                    pf_discount_input = self.page.locator("input#seniorCitizenDiscount0").nth(1)
+                    pf_discount_input = self.page.locator(
+                        "input#seniorCitizenDiscount0"
+                    ).nth(1)
                 else:
-                    pf_discount_input = self.page.locator("input#pwdDiscount0").nth(1)
+                    pf_discount_input = self.page.locator(
+                        "input#pwdDiscount0"
+                    ).nth(1)
 
-                # Actual Charges
-                _type_into_number_field(self.page, pf_actual_input, pf_actual)
+                _type_into_number_field(
+                    self.page,
+                    pf_actual_input,
+                    pf_actual
+                )
 
-                # Discount
-                _type_into_number_field(self.page, pf_discount_input, pf_discount)
-                discount_targets.append((pf_discount_input, f"{pf_discount:.2f}"))
+                _type_into_number_field(
+                    self.page,
+                    pf_discount_input,
+                    pf_discount
+                )
 
-                logger.success("Professional Fees populated.")
+                discount_targets.append(
+                    (
+                        pf_discount_input,
+                        f"{pf_discount:.2f}"
+                    )
+                )
+
+                logger.success(
+                    "Professional Fees populated."
+                )
 
             # ==========================================================
             # Re-verify discount fields before saving
             # ==========================================================
-            # Beacon has been observed to silently reset a previously-
-            # typed discount back to 0 once focus shifts to a later
-            # field elsewhere on the page — even though it read back
-            # correctly right after being typed. Do one final pass over
-            # every discount field we set, retyping any that reverted,
-            # right before committing with Save.
-
             if discount_targets:
-                logger.info("Re-verifying discount fields before saving...")
+
+                logger.info(
+                    "Re-verifying discount fields before saving..."
+                )
 
                 for verify_pass in range(1, 4):
+
                     reverted = []
 
                     for target_locator, expected in discount_targets:
+
                         try:
-                            current = target_locator.input_value().strip()
+                            current = (
+                                target_locator
+                                .input_value()
+                                .strip()
+                            )
                         except Exception:
                             current = None
 
                         if current != expected:
-                            reverted.append((target_locator, expected, current))
+                            reverted.append(
+                                (
+                                    target_locator,
+                                    expected,
+                                    current
+                                )
+                            )
 
                     if not reverted:
-                        logger.success("All discount fields verified correct.")
+
+                        logger.success(
+                            "All discount fields verified correct."
+                        )
+
                         break
 
                     logger.warning(
-                        f"Verification pass {verify_pass}/3: "
-                        f"{len(reverted)} field(s) reverted — retyping "
+                        f"Verification pass "
+                        f"{verify_pass}/3: "
+                        f"{len(reverted)} field(s) reverted — "
+                        f"retyping "
                         + ", ".join(
                             f"(expected {exp}, got {cur})"
                             for _, exp, cur in reverted
@@ -1076,10 +1214,15 @@ class SOAAutomation:
                     )
 
                     for target_locator, expected, _ in reverted:
+
                         _type_into_number_field(
-                            self.page, target_locator, float(expected)
+                            self.page,
+                            target_locator,
+                            float(expected)
                         )
+
                 else:
+
                     logger.warning(
                         "Some discount fields may still be incorrect "
                         "after 3 verification passes — proceeding "
@@ -1090,87 +1233,335 @@ class SOAAutomation:
             # ==========================================================
             # Save Statement of Account
             # ==========================================================
+            logger.info(
+                "Saving Statement of Account..."
+            )
 
-            logger.info("Saving Statement of Account...")
-
-            save_btn = self.page.locator("button[type='submit']").last
+            save_btn = self.page.locator(
+                "button[type='submit']"
+            ).last
 
             save_btn.scroll_into_view_if_needed()
             save_btn.click(force=True)
 
-            logger.info("Waiting for save to complete...")
+            logger.info(
+                "Waiting for save to complete..."
+            )
 
-            self.page.wait_for_load_state("networkidle")
+            self.page.wait_for_load_state(
+                "networkidle"
+            )
+
             self.page.wait_for_timeout(3000)
 
-            logger.success("Statement of Account saved successfully.")
-            close_btn = self.page.get_by_role("button", name="CLOSE")
+            logger.success(
+                "Statement of Account saved successfully."
+            )
+
+            close_btn = self.page.get_by_role(
+                "button",
+                name="CLOSE"
+            )
+
             close_btn.scroll_into_view_if_needed()
             close_btn.click(force=True)
 
             is_last = (idx == total - 1)
 
             if is_last:
-                logger.info("No more transmittals to process — skipping return to list.")
+                logger.info(
+                    "No more transmittals to process — "
+                    "skipping return to list."
+                )
             else:
                 open_transmittals(self.page)
 
         except Exception as e:
-            logger.error(f"\nERROR on transmittal {idx + 1} ({transmittal_no}): {e}")
-            logger.warning("Skipping to next transmittal...")
+
+            logger.error(
+                f"\nERROR on transmittal "
+                f"{idx + 1} ({transmittal_no}): {e}"
+            )
+
             result["status"] = "failed"
             result["message"] = str(e)
 
-            is_last = (idx == total - 1)
+            # ---------------------------------------------------------
+            # RECOVERY
+            # ---------------------------------------------------------
+            # Recover the SAME transmittal. The run() method owns the
+            # retry counter and will decide whether to retry this
+            # transmittal or move to the next one.
+            logger.warning(
+                f"Attempting recovery for transmittal "
+                f"'{transmittal_no}'..."
+            )
 
-            if not is_last:
-                try:
-                    self._cancel_upload_confirmation()
-                    open_transmittals(self.page)
-                except:
-                    pass
+            recovery_success = False
 
-        self.results.append(result)
+            try:
+
+                self._cancel_upload_confirmation()
+
+                recovery_success = self._recover_transmittal(
+                    transmittal_no
+                )
+
+            except Exception as recovery_error:
+
+                logger.error(
+                    f"Recovery raised an unexpected error: "
+                    f"{recovery_error}"
+                )
+
+            if recovery_success:
+
+                logger.success(
+                    f"Transmittal '{transmittal_no}' has been "
+                    f"recovered and is ready for retry."
+                )
+
+            else:
+
+                logger.error(
+                    f"Unable to recover transmittal "
+                    f"'{transmittal_no}'."
+                )
+
+            # IMPORTANT:
+            # Do not move to the next transmittal here.
+            # run() controls the retry count.
+
         return result
 
     def run(self, transmittals):
-        """Main entry point for SOA upload automation."""
+        """
+        Main entry point for SOA upload automation.
+
+        Step 3 retry behavior:
+            Attempt 1
+                ↓ failure
+            Recover SAME transmittal
+                ↓
+            Retry 1
+                ↓ failure
+            Recover SAME transmittal
+                ↓
+            Retry 2
+                ↓ failure
+            Retry limit reached
+                ↓
+            Move to next transmittal
+
+        max_retries is the number of retries AFTER the initial attempt.
+        Therefore max_retries=2 means 3 attempts total.
+        """
         try:
             report.results.clear()
+            self.results.clear()
+
             self.page = browser_session.connect()
 
-            # ── Navigate to Transmittals ───────────────────────────────────────
+            # ── Navigate to Transmittals ───────────────────────────────
             logger.info("Opening Transmittals...")
             open_transmittals(self.page)
 
-            # ── Transmittal loop ───────────────────────────────────────────────
+            # ── Transmittal loop with controlled retries ───────────────
             for idx, transmittal_no in enumerate(transmittals):
-                self.process_transmittal(transmittal_no, idx, len(transmittals))
+
+                transmittal_no = str(transmittal_no).strip()
+
+                retry_count = 0
+                max_attempts = self.max_retries + 1
+
+                while True:
+
+                    attempt_number = retry_count + 1
+
+                    logger.info("")
+                    logger.info("=" * 60)
+                    logger.info(
+                        f"PROCESSING TRANSMITTAL "
+                        f"{idx + 1}/{len(transmittals)}"
+                    )
+                    logger.info(
+                        f"Transmittal: {transmittal_no}"
+                    )
+                    logger.info(
+                        f"Attempt {attempt_number}/{max_attempts}"
+                    )
+                    logger.info("=" * 60)
+
+                    result = self.process_transmittal(
+                        transmittal_no,
+                        idx,
+                        len(transmittals)
+                    )
+
+                    # -------------------------------------------------
+                    # SUCCESS
+                    # -------------------------------------------------
+                    if result["status"] == "success":
+
+                        self.results.append(result)
+
+                        logger.success(
+                            f"Transmittal '{transmittal_no}' "
+                            f"completed successfully on attempt "
+                            f"{attempt_number}/{max_attempts}."
+                        )
+
+                        break
+
+                    # -------------------------------------------------
+                    # SKIPPED
+                    # -------------------------------------------------
+                    if result["status"] == "skipped":
+
+                        self.results.append(result)
+
+                        logger.warning(
+                            f"Transmittal '{transmittal_no}' "
+                            f"was skipped."
+                        )
+
+                        # A skipped transmittal may already have returned
+                        # to the list. Ensure the next transmittal starts
+                        # from the list page.
+                        if idx < len(transmittals) - 1:
+
+                            try:
+                                open_transmittals(
+                                    self.page
+                                )
+
+                            except Exception as navigation_error:
+
+                                logger.warning(
+                                    f"Could not return to transmittal "
+                                    f"list: {navigation_error}"
+                                )
+
+                        break
+
+                    # -------------------------------------------------
+                    # FAILED
+                    # -------------------------------------------------
+                    retry_count += 1
+
+                    # If retry_count is now greater than max_retries,
+                    # the initial attempt plus all allowed retries
+                    # have been exhausted.
+                    if retry_count > self.max_retries:
+
+                        self.results.append(result)
+
+                        logger.error(
+                            f"Transmittal '{transmittal_no}' "
+                            f"FAILED after {max_attempts} attempt(s). "
+                            f"Retry limit reached — moving to next "
+                            f"transmittal."
+                        )
+
+                        if idx < len(transmittals) - 1:
+
+                            try:
+                                open_transmittals(
+                                    self.page
+                                )
+
+                            except Exception as navigation_error:
+
+                                logger.warning(
+                                    f"Could not return to transmittal "
+                                    f"list after final failure: "
+                                    f"{navigation_error}"
+                                )
+
+                        break
+
+                    # -------------------------------------------------
+                    # RETRY SAME TRANSMITTAL
+                    # -------------------------------------------------
+                    logger.warning(
+                        f"Transmittal '{transmittal_no}' failed."
+                    )
+
+                    logger.warning(
+                        f"Retrying SAME transmittal "
+                        f"({retry_count}/{self.max_retries})..."
+                    )
+
+                    # process_transmittal() already attempted recovery
+                    # of the SAME transmittal in its exception handler.
+                    #
+                    # If recovery succeeded, the next loop iteration
+                    # searches/processes the same transmittal again.
+                    #
+                    # If recovery failed, we still retry only because
+                    # the retry count is controlled. The next attempt
+                    # will fail/recover again rather than getting stuck
+                    # in an infinite loop.
 
             logger.success("=" * 60)
-            logger.success("SOA UPLOAD AUTOMATION COMPLETED")
+            logger.success(
+                "SOA UPLOAD AUTOMATION COMPLETED"
+            )
             logger.success("=" * 60)
 
-            # ── Per-transmittal breakdown ───────────────────────────────────────
+            # ── Per-transmittal breakdown ──────────────────────────────
             logger.info("")
-            logger.info("RESULTS BREAKDOWN:")
+            logger.info(
+                "RESULTS BREAKDOWN:"
+            )
             logger.info("-" * 60)
 
-            success_count = sum(1 for r in self.results if r["status"] == "success")
-            failed_count = sum(1 for r in self.results if r["status"] == "failed")
-            skipped_count = sum(1 for r in self.results if r["status"] == "skipped")
+            success_count = sum(
+                1
+                for r in self.results
+                if r["status"] == "success"
+            )
+
+            failed_count = sum(
+                1
+                for r in self.results
+                if r["status"] == "failed"
+            )
+
+            skipped_count = sum(
+                1
+                for r in self.results
+                if r["status"] == "skipped"
+            )
 
             for r in self.results:
-                line = f"{r['transmittal']}: {r['status'].upper()} - {r['message']}"
+
+                line = (
+                    f"{r['transmittal']}: "
+                    f"{r['status'].upper()} - "
+                    f"{r['message']}"
+                )
 
                 if r["status"] == "success":
-                    logger.success(f"[SUCCESS] {line}")
+
+                    logger.success(
+                        f"[SUCCESS] {line}"
+                    )
+
                 elif r["status"] == "skipped":
-                    logger.warning(f"[SKIPPED] {line}")
+
+                    logger.warning(
+                        f"[SKIPPED] {line}"
+                    )
+
                 else:
-                    logger.error(f"[FAILED] {line}")
+
+                    logger.error(
+                        f"[FAILED] {line}"
+                    )
 
             logger.info("-" * 60)
+
             logger.info(
                 f"Total: {len(self.results)} | "
                 f"Success: {success_count} | "
@@ -1178,40 +1569,66 @@ class SOAAutomation:
                 f"Skipped: {skipped_count}"
             )
 
-            logger.info("No more transmittals to process. Closing browser...")
+            logger.info(
+                "No more transmittals to process. "
+                "Closing browser..."
+            )
+
             self.close()
 
             return True
 
         except Exception as e:
-            logger.error(f"Fatal error in SOA automation: {e}")
+
+            logger.error(
+                f"Fatal error in SOA automation: {e}"
+            )
+
             self.close()
+
             return False
 
     def get_results(self):
-        """Returns the list of per-transmittal results."""
+        """Returns the list of final per-transmittal results."""
         return self.results
 
     def close(self):
         """Close browser session."""
         try:
+
             if self.page:
+
                 context = self.page.context
                 browser = context.browser
 
                 try:
                     context.close()
+
                 except Exception as e:
-                    logger.warning(f"Error closing context: {e}")
+
+                    logger.warning(
+                        f"Error closing context: {e}"
+                    )
 
                 if browser:
+
                     try:
                         browser.close()
-                    except Exception as e:
-                        logger.warning(f"Error closing browser: {e}")
 
-                logger.info("Browser closed.")
+                    except Exception as e:
+
+                        logger.warning(
+                            f"Error closing browser: {e}"
+                        )
+
+                logger.info(
+                    "Browser closed."
+                )
 
             self.page = None
+
         except Exception as e:
-            logger.warning(f"Error during close(): {e}")
+
+            logger.warning(
+                f"Error during close(): {e}"
+            )
