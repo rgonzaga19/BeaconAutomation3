@@ -527,6 +527,43 @@ CF4_CHECKBOX_FIELDS = [
 ]
 
 
+def _check_cf4_checkbox(page, dom_name, timeout=5000):
+    """Check a single CF4 checkbox, tolerant of controlled components that
+    take a render tick to reflect `checked` back onto the DOM node.
+
+    We used to call `.check(force=True)` directly. `force=True` skips
+    Playwright's normal actionability checks *and* its post-click
+    retry-wait for the expected state — it clicks once and verifies
+    once. For a React-controlled checkbox (onChange -> setState ->
+    re-render), that single immediate check can lose the race and come
+    back "did not change its state" even though the input was a
+    perfectly valid, unobstructed click target (confirmed live via
+    devtools: the native <input> sits absolutely positioned with
+    pointer-events:all and a higher z-index than the decorative box
+    beside it — nothing was actually intercepting the click).
+
+    So: try the normal (non-forced) `.check()` first and let Playwright
+    poll/wait for the checked state the way it's designed to. Only if
+    that genuinely fails (something really is blocking the input) fall
+    back to a forced click, then verify explicitly.
+    """
+    checkbox = page.locator(f'input[name="{dom_name}"]').first
+    checkbox.wait_for(state="attached", timeout=timeout)
+
+    if checkbox.is_checked():
+        return
+
+    try:
+        checkbox.check(timeout=timeout)
+        return
+    except Exception:
+        pass
+
+    checkbox.click(force=True)
+    if not checkbox.is_checked():
+        raise Exception(f"'{dom_name}' checkbox did not toggle after retry")
+
+
 def _apply_cf4_checkbox(page, cf4_data, settings_key, dom_name, label, specify_settings_key, specify_dom_name):
     """Check one CF4 checkbox if cf4_data enables it, and — for
     "Others"-style rows — fill its paired specify text field too. Every
@@ -535,10 +572,18 @@ def _apply_cf4_checkbox(page, cf4_data, settings_key, dom_name, label, specify_s
     if not cf4_data.get(settings_key):
         return
 
-    _try_step(
+    checked_ok = _try_step(
         f"Checked {label}",
-        lambda: page.locator(f'input[name="{dom_name}"]').check(force=True)
+        lambda: _check_cf4_checkbox(page, dom_name)
     )
+
+    if not checked_ok:
+        # The specify field is disabled until its checkbox is actually
+        # checked (confirmed live via devtools), so if the checkbox step
+        # above failed there's no point trying to click/fill it — that
+        # was previously burning a full 30s timeout waiting on a field
+        # that could never become enabled.
+        return
 
     if specify_settings_key and specify_dom_name:
         specify_text = cf4_data.get(specify_settings_key, "")
