@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 
 
@@ -66,6 +67,67 @@ def _safe_networkidle(page, timeout=15000):
         page.wait_for_load_state("networkidle", timeout=timeout)
     except PlaywrightTimeoutError:
         logger.warning("networkidle wait timed out — continuing anyway")
+
+def _log_page_state(page, stage, transmittal_no=None, medicine_index=None, medicine_name=None):
+    """Log the current browser/page state for diagnosing automation freezes."""
+    try:
+        url = page.url
+
+        logger.info(
+            f"[WATCHDOG] Stage={stage} | "
+            f"Transmittal={transmittal_no or 'N/A'} | "
+            f"Medicine={medicine_index if medicine_index is not None else 'N/A'} | "
+            f"Name={medicine_name or 'N/A'} | "
+            f"URL={url}"
+        )
+
+        try:
+            logger.info(
+                f"[WATCHDOG] Page title: {page.title()}"
+            )
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.warning(f"[WATCHDOG] Unable to read page state: {e}")
+
+# Maximum time allowed for one medicine-mapping operation.
+# This is detection only for now — no automatic recovery yet.
+MEDICINE_OPERATION_TIMEOUT = 30
+
+def _check_medicine_operation_timeout(
+    start_time,
+    page,
+    transmittal_no,
+    medicine_index,
+    medicine_name,
+    stage
+):
+    """Detect when a medicine operation has taken too long.
+
+    This function does not recover or reload anything yet.
+    It only logs the timeout and returns True/False.
+    """
+    elapsed = time.monotonic() - start_time
+
+    if elapsed >= MEDICINE_OPERATION_TIMEOUT:
+        logger.error(
+            f"[WATCHDOG] MEDICINE TIMEOUT — "
+            f"elapsed={elapsed:.1f}s | "
+            f"limit={MEDICINE_OPERATION_TIMEOUT}s"
+        )
+
+        _log_page_state(
+            page,
+            f"TIMEOUT: {stage}",
+            transmittal_no=transmittal_no,
+            medicine_index=medicine_index,
+            medicine_name=medicine_name
+        )
+
+        return True
+
+    return False
 
 
 def _wait_for_save_changes_complete(page, dialog_timeout=15000, settle_buffer=1500):
@@ -860,7 +922,17 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                 rows = page.locator("tbody tr")
 
                 for i in range(rows.count()):
-                    logger.info(f"\nProcessing row {i}")
+                    logger.info(f"\nProcessing medicine {i + 1}/{rows.count()}")
+
+                    _log_page_state(
+                        page,
+                        "START MEDICINE",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1
+                    )
+
+                    medicine_start_time = time.monotonic()
+
                     row = rows.nth(i)
                     text = row.inner_text().upper()
                     logger.info(text)
@@ -881,6 +953,13 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                             break
 
                     logger.info(f"Medicine Name: {medicine_name}")
+                    _log_page_state(
+                        page,
+                        "MEDICINE IDENTIFIED",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
 
                     # Determine medicine search term
                     if "REGULAR HEPARIN" in medicine_name:
@@ -901,20 +980,81 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                         continue
 
                     # Open 3-dot menu → Map Medicine
+                    _log_page_state(
+                        page,
+                        "OPENING MAP MEDICINE",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
+
                     row.locator("button").click()
                     page.wait_for_timeout(1000)
+
                     page.get_by_text("Map Medicine", exact=True).click()
+
+                    _log_page_state(
+                        page,
+                        "MAP MEDICINE OPENED",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
+
                     _safe_networkidle(page)
+
+                    _log_page_state(
+                        page,
+                        "MAP MEDICINE NETWORK WAIT COMPLETE",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
 
                     # Type search term
                     search_box = page.locator('input[id*="SearchMedicinetoMap"]').first
                     search_box.click()
                     search_box.press("Control+A")
                     search_box.press("Backspace")
+                    
+                    _log_page_state(
+                        page,
+                        f"SEARCHING MEDICINE: {search_term}",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
+
                     search_box.type(search_term, delay=100)
 
+                    _log_page_state(
+                        page,
+                        "WAITING FOR MEDICINE RESULTS",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
+
                     page.wait_for_selector('input[type="radio"]', timeout=10000)
+
                     logger.info(f"Textbox value: {search_box.input_value()}")
+
+                    _log_page_state(
+                        page,
+                        "MEDICINE RESULTS LOADED",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
+
+                    _check_medicine_operation_timeout(
+                        medicine_start_time,
+                        page,
+                        transmittal_no,
+                        i + 1,
+                        medicine_name,
+                        "MEDICINE RESULTS LOADED"
+                    )
 
                     popup = (
                         page.locator("text=Please Select the Medicine")
@@ -975,9 +1115,50 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                         ).click(force=True)
                         logger.info("Selected EPOETIN BETA 5000 IU/0.3 ML")
 
+                    _log_page_state(
+                        page,
+                        "CLICKING CONTINUE",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
+
                     continue_btn = page.get_by_role("button", name="CONTINUE")
                     continue_btn.click(force=True)
+
+                    _log_page_state(
+                        page,
+                        "CONTINUE CLICKED",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
+
                     _safe_networkidle(page)
+
+                    _log_page_state(
+                        page,
+                        "MEDICINE NETWORK WAIT COMPLETE",
+                        transmittal_no=transmittal_no,
+                        medicine_index=i + 1,
+                        medicine_name=medicine_name
+                    )
+
+                    timed_out = _check_medicine_operation_timeout(
+                        medicine_start_time,
+                        page,
+                        transmittal_no,
+                        i + 1,
+                        medicine_name,
+                        "MEDICINE NETWORK WAIT COMPLETE"
+                    )
+
+                    if timed_out:
+                        logger.warning(
+                            "[WATCHDOG] Medicine exceeded the allowed "
+                            "operation time, but recovery is not enabled yet."
+                        )
+
                     logger.info("Medicine mapped")
 
                 logger.success("All medicines mapped")
