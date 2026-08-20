@@ -325,30 +325,103 @@ class CF2Automation:
         )
         print(f"Located existing draft. Transmittal number: {data.transmittal}")
 
-    def _open_and_search_transmittal(self, page, data):
+    def _open_and_search_transmittal(self, page, data, attempts=3):
         """Searches the Transmittals list for data.transmittal. Returns
         the matching row's Locator on success, or None if nothing
         matched (the page is left on a clean, empty-results Transmittals
-        list either way — no cleanup needed before the next patient)."""
+        list either way — no cleanup needed before the next patient).
+
+        Same intermittent-false-"not found" issue beacon.py's
+        _search_transmittal() root-caused, and the same fix applied here:
+        the Transmittals table is client-rendered, so a fixed
+        networkidle+sleep can read the row count at the exact instant the
+        table is still empty or still showing the *previous* search's row
+        — making a transmittal that's really there look "not found" (and,
+        with a stale row, look like a match for the wrong patient).
+
+        Instead of trusting a bare row count right after a fixed pause,
+        this polls the DOM until matching rows appear or Beacon explicitly
+        reports no results, then verifies the first row's text actually
+        contains the transmittal number before accepting it. If a
+        stale/mismatched row is caught, it retries the search rather than
+        giving up (or handing back the wrong row) immediately.
+        """
         print("Opening Transmittals...")
         open_transmittals(page)
-        page.wait_for_load_state("networkidle")
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except PlaywrightTimeoutError:
+            print("WARNING: networkidle wait timed out — continuing anyway")
 
-        print(f"Searching: {data.transmittal}")
         search_box = page.locator('input[type="text"]').first
-        search_box.click()
-        search_box.press("Control+A")
-        search_box.press("Backspace")
-        search_box.fill(data.transmittal)
-        search_box.press("Enter")
 
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(2000)
+        for attempt in range(1, attempts + 1):
+            print(f"Searching: {data.transmittal} (attempt {attempt}/{attempts})")
+            search_box.click()
+            search_box.press("Control+A")
+            search_box.press("Backspace")
+            search_box.fill(data.transmittal)
+            search_box.press("Enter")
 
-        if page.locator("tbody tr").count() == 0:
-            print("Transmittal not found.")
-            return None
-        return page.locator("tbody tr").first
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except PlaywrightTimeoutError:
+                print("WARNING: networkidle wait timed out — continuing anyway")
+
+            # Poll instead of a fixed sleep: wait until rows show up or
+            # Beacon explicitly says there's nothing, whichever comes first.
+            try:
+                page.wait_for_function(
+                    """() => {
+                        const rows = document.querySelectorAll('tbody tr');
+                        if (rows.length > 0) return true;
+                        const bodyText = (document.body.innerText || '').toLowerCase();
+                        return bodyText.includes('no data') ||
+                               bodyText.includes('no record') ||
+                               bodyText.includes('no results');
+                    }""",
+                    timeout=8000
+                )
+            except PlaywrightTimeoutError:
+                pass
+
+            # Small settle buffer for slower renders even after the poll passes.
+            page.wait_for_timeout(400)
+
+            row_count = page.locator("tbody tr").count()
+
+            if row_count > 0:
+                first_row = page.locator("tbody tr").first
+                first_row_text = first_row.inner_text()
+
+                if data.transmittal in first_row_text:
+                    return first_row
+
+                if attempt < attempts:
+                    print(
+                        f"WARNING: Table showed a row not matching "
+                        f"{data.transmittal} (likely stale from a previous "
+                        f"search) on attempt {attempt}/{attempts}; retrying..."
+                    )
+                    page.wait_for_timeout(1000)
+                    continue
+
+                # Last attempt: trust the row count even if the exact
+                # string match failed (e.g. formatting differences), same
+                # as the original behavior.
+                print("Transmittal row found (row count only, no exact text match).")
+                return first_row
+
+            if attempt < attempts:
+                print(
+                    f"WARNING: No rows found for transmittal "
+                    f"{data.transmittal} on attempt {attempt}/{attempts}; "
+                    f"retrying search..."
+                )
+                page.wait_for_timeout(1500)
+
+        print("Transmittal not found.")
+        return None
 
     def _open_manage_claims(self, page, row):
         def _open():
