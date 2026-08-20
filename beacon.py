@@ -11,7 +11,9 @@ if getattr(sys, "frozen", False):
     )
 
 
-from logger import logger
+from datetime import datetime
+
+from logger import logger, APP_DATA
 from reports import report
 
 from pathlib import Path
@@ -91,9 +93,97 @@ def _log_page_state(page, stage, transmittal_no=None, medicine_index=None, medic
     except Exception as e:
         logger.warning(f"[WATCHDOG] Unable to read page state: {e}")
 
+
+# Screenshots taken during medicine-timeout recovery. Same APP_DATA root
+# logger.py and browser_session.py already use for logs/session.json, so
+# this doesn't introduce a second on-disk convention.
+SCREENSHOT_DIR = APP_DATA / "screenshots"
+SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _capture_medicine_recovery_state(
+    page,
+    stage,
+    transmittal_no=None,
+    medicine_index=None,
+    medicine_name=None,
+    elapsed=None,
+    error=None
+):
+    """Capture full diagnostic evidence for a medicine-mapping timeout,
+    before any recovery action is attempted. Screenshot-taking is wrapped
+    so a failure here (e.g. page already navigating) never blocks the
+    recovery flow that follows it.
+
+    Does not raise, does not recover anything — evidence capture only.
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    safe_transmittal = transmittal_no or "unknown"
+    safe_index = medicine_index if medicine_index is not None else "NA"
+
+    screenshot_path = SCREENSHOT_DIR / (
+        f"medicine_timeout_{safe_transmittal}_med{safe_index}_{timestamp}.png"
+    )
+
+    try:
+        page.screenshot(path=str(screenshot_path), full_page=True)
+        logger.info(f"[WATCHDOG] Capturing recovery screenshot... saved to {screenshot_path}")
+    except Exception as e:
+        logger.warning(f"[WATCHDOG] Screenshot capture failed: {e}")
+
+    # Reuse the existing state logger rather than duplicating URL/title
+    # reading here.
+    _log_page_state(
+        page,
+        f"RECOVERY EVIDENCE: {stage}",
+        transmittal_no=transmittal_no,
+        medicine_index=medicine_index,
+        medicine_name=medicine_name
+    )
+
+    elapsed_str = f"{elapsed:.1f}s" if elapsed is not None else "N/A"
+
+    logger.error(
+        f"[WATCHDOG] MEDICINE TIMEOUT — "
+        f"Transmittal={safe_transmittal} | "
+        f"Medicine={safe_index} | "
+        f"Name={medicine_name or 'N/A'} | "
+        f"Stage={stage} | "
+        f"Elapsed={elapsed_str}"
+    )
+
+    if error:
+        logger.error(f"[WATCHDOG] Error detail: {error}")
+
+
 # Maximum time allowed for one medicine-mapping operation.
-# This is detection only for now — no automatic recovery yet.
 MEDICINE_OPERATION_TIMEOUT = 30
+
+
+class MedicineRecoveryRequired(Exception):
+    """Raised when a medicine-mapping operation exceeds
+    MEDICINE_OPERATION_TIMEOUT. Signals that this transmittal needs
+    page/transmittal-level recovery (handled by the retry structure in the
+    transmittal loop) — this exception itself does not recover anything.
+
+    Carries the failing operation's context so the recovery handler and
+    the failure report don't have to re-derive it from the message text.
+    """
+
+    def __init__(self, transmittal_no, medicine_index, medicine_name, stage, elapsed):
+        self.transmittal_no = transmittal_no
+        self.medicine_index = medicine_index
+        self.medicine_name = medicine_name
+        self.stage = stage
+        self.elapsed = elapsed
+
+        super().__init__(
+            f"Medicine mapping timeout on transmittal {transmittal_no}, "
+            f"medicine {medicine_index} ({medicine_name}) at stage "
+            f"'{stage}' after {elapsed:.1f}s"
+        )
+
 
 def _check_medicine_operation_timeout(
     start_time,
@@ -105,29 +195,32 @@ def _check_medicine_operation_timeout(
 ):
     """Detect when a medicine operation has taken too long.
 
-    This function does not recover or reload anything yet.
-    It only logs the timeout and returns True/False.
+    On timeout: captures recovery evidence (screenshot + page state, via
+    _capture_medicine_recovery_state) and raises MedicineRecoveryRequired.
+    Does not recover or reload anything itself — that's the transmittal
+    loop's job, catching this exception.
+
+    Returns None if the operation is still within the time limit.
     """
     elapsed = time.monotonic() - start_time
 
     if elapsed >= MEDICINE_OPERATION_TIMEOUT:
-        logger.error(
-            f"[WATCHDOG] MEDICINE TIMEOUT — "
-            f"elapsed={elapsed:.1f}s | "
-            f"limit={MEDICINE_OPERATION_TIMEOUT}s"
-        )
-
-        _log_page_state(
+        _capture_medicine_recovery_state(
             page,
-            f"TIMEOUT: {stage}",
+            stage,
             transmittal_no=transmittal_no,
             medicine_index=medicine_index,
-            medicine_name=medicine_name
+            medicine_name=medicine_name,
+            elapsed=elapsed
         )
 
-        return True
-
-    return False
+        raise MedicineRecoveryRequired(
+            transmittal_no=transmittal_no,
+            medicine_index=medicine_index,
+            medicine_name=medicine_name,
+            stage=stage,
+            elapsed=elapsed
+        )
 
 
 def _wait_for_save_changes_complete(page, dialog_timeout=15000, settle_buffer=1500):
@@ -1189,7 +1282,7 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                         medicine_name=medicine_name
                     )
 
-                    timed_out = _check_medicine_operation_timeout(
+                    _check_medicine_operation_timeout(
                         medicine_start_time,
                         page,
                         transmittal_no,
@@ -1197,12 +1290,6 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                         medicine_name,
                         "MEDICINE NETWORK WAIT COMPLETE"
                     )
-
-                    if timed_out:
-                        logger.warning(
-                            "[WATCHDOG] Medicine exceeded the allowed "
-                            "operation time, but recovery is not enabled yet."
-                        )
 
                     logger.info("Medicine mapped")
 
