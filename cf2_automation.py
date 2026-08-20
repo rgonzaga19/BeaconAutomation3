@@ -968,9 +968,82 @@ class CF2Automation:
         def _save():
             print("Saving CF2...")
 
+            # First SAVE click — existing, proven selector (last button
+            # inside the cf2Save container).
             page.locator('#cf2Save').get_by_role("button").last.click()
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(1000)
+
+            # Beacon is occasionally unstable enough that a single SAVE
+            # click doesn't actually persist the form even though the
+            # click itself reports success — some users have run into CF2
+            # not saving because of this. As a validation/backup, fire a
+            # second click at the same SAVE button (the pink "SAVE" button
+            # inside #cf2Save), this time located explicitly by its
+            # visible label rather than "last button in the container" so
+            # it stays correct even if the container's button order shifts
+            # under Beacon's instability.
+            #
+            # This second click is best-effort: the first click already
+            # fired above, so a flaky/missing second click shouldn't turn
+            # an otherwise-successful save into a failed patient.
+            try:
+                second_save = page.locator('#cf2Save').get_by_role(
+                    "button", name="SAVE", exact=True
+                )
+                if second_save.count() > 0:
+                    print("Triggering second SAVE click as validation...")
+                    second_save.first.click()
+                    page.wait_for_load_state("networkidle")
+                    page.wait_for_timeout(1000)
+                else:
+                    print(
+                        "WARNING: Second SAVE button (by label) not "
+                        "found — skipping backup click."
+                    )
+            except Exception as e:
+                print(f"WARNING: Second SAVE click failed, continuing: {e}")
+
+            # Third click: the floating round SAVE button (FAB) at the
+            # bottom-right of the CF2 form. This is a visually and
+            # structurally separate save affordance from the pink
+            # rectangle button — its "SAVE" label only becomes visible on
+            # hover, but it's still present in the DOM as hidden text, so
+            # it can be matched reliably without needing the hover state.
+            #
+            # NOTE: matching on "button with an svg child" alone is NOT
+            # enough — every dropdown toggle in the CF2 form (Confinement
+            # Information, Accommodation Type, etc.) also renders as a
+            # button with an svg chevron icon, and several of those sit
+            # earlier in the DOM than the floating SAVE button. `.first`
+            # on that broader match was landing on one of those dropdown
+            # toggles instead — clicking it open and blocking the rest of
+            # the flow. Requiring the hidden "SAVE" text alongside the svg
+            # excludes those dropdown buttons, which don't carry that
+            # label.
+            try:
+                fab_save = page.locator('#cf2Save').locator('button').filter(
+                    has=page.locator('svg')
+                ).filter(has_text="SAVE")
+
+                if fab_save.count() > 0:
+                    print(
+                        "Triggering third SAVE click (floating button) "
+                        "as validation..."
+                    )
+                    fab_save.first.click()
+                    page.wait_for_load_state("networkidle")
+                    page.wait_for_timeout(1000)
+                else:
+                    print(
+                        "WARNING: Floating SAVE button (svg icon) not "
+                        "found — skipping third click."
+                    )
+            except Exception as e:
+                print(
+                    f"WARNING: Third SAVE click (floating button) failed, "
+                    f"continuing: {e}"
+                )
 
         self._step("Saving CF2 form...", _save, critical=True)
         print("CF2 saved.")
@@ -994,9 +1067,22 @@ class CF2Automation:
 
         date_str = data.last_treatment.strftime("%m%d%Y")
 
+        # Read these once up front (instead of inline inside each fill
+        # closure) so the same expected values can be reused below when
+        # verifying the fields actually stuck.
+        billing_clerk_name = self._get_billing_clerk_name()
+        billing_clerk_cp = self._get_billing_clerk_cp()
+
+        # Locators are resolved fresh on every use (Playwright re-queries
+        # the DOM each call), so grabbing them once here and reusing them
+        # in both the fill and the refill/verify closures below is safe.
+        prepared_by_input = page.locator('input[name="preparedBy"]')
+        contact_input = page.locator('input[name="adminContactNo"]')
+        admin_date_input = page.locator('input[id^="adminDateSigned-MM-DD-YYYY"]')
+        patient_rep_input = page.locator('input[name="patientRepresentative"]')
+        conforme_date_input = page.locator('input[id^="representativeDateSigned-MM-DD-YYYY"]')
+
         def _fill_prepared_by():
-            billing_clerk_name = self._get_billing_clerk_name()
-            prepared_by_input = page.locator('input[name="preparedBy"]')
             prepared_by_input.click()
             prepared_by_input.press("Control+A")
             prepared_by_input.press("Backspace")
@@ -1011,10 +1097,6 @@ class CF2Automation:
         page.wait_for_timeout(300)
 
         def _fill_prepared_by_cp():
-            billing_clerk_cp = self._get_billing_clerk_cp()
-
-            contact_input = page.locator('input[name="adminContactNo"]')
-
             contact_input.click()
             contact_input.press("Control+A")
             contact_input.press("Backspace")
@@ -1029,22 +1111,129 @@ class CF2Automation:
 
         page.wait_for_timeout(300)
 
-        def _fill_signatories():
-            admin_date = page.locator('input[id^="adminDateSigned-MM-DD-YYYY"]')
-            admin_date.click()
-            admin_date.type(date_str, delay=100)
-            admin_date.press("Tab")
-            page.wait_for_timeout(300)
+        def _fill_admin_date():
+            admin_date_input.click()
+            admin_date_input.press("Control+A")
+            admin_date_input.press("Backspace")
+            admin_date_input.type(date_str, delay=100)
+            admin_date_input.press("Tab")
 
-            page.locator('input[name="patientRepresentative"]').fill(data.patient_name)
-            page.wait_for_timeout(300)
+        def _fill_patient_representative():
+            patient_rep_input.click()
+            patient_rep_input.press("Control+A")
+            patient_rep_input.press("Backspace")
+            patient_rep_input.fill(data.patient_name)
 
-            conforme_date = page.locator('input[id^="representativeDateSigned-MM-DD-YYYY"]')
-            conforme_date.click()
+        def _fill_conforme_date():
+            conforme_date_input.click()
+            conforme_date_input.press("Control+A")
+            conforme_date_input.press("Backspace")
             page.wait_for_timeout(200)
-            conforme_date.type(date_str, delay=100)
+            conforme_date_input.type(date_str, delay=100)
+
+        def _fill_signatories():
+            _fill_admin_date()
+            page.wait_for_timeout(300)
+
+            _fill_patient_representative()
+            page.wait_for_timeout(300)
+
+            _fill_conforme_date()
 
         self._step("Filling Signatories...", _fill_signatories, critical=True)
+        page.wait_for_timeout(300)
+
+        # --- Validation ---------------------------------------------------
+        # Beacon is occasionally unstable: even after a field is typed into
+        # (and reports a successful click/fill/Tab), the DOM can clear that
+        # field's content on its own shortly after — so a field that looked
+        # filled a moment ago can be empty by the time Save is clicked,
+        # silently producing a Statement of Account with blank signatories.
+        # Re-read every field we just filled and, if any came back
+        # empty/mismatched, re-run its fill and check again before saving,
+        # instead of finding out only after the record is already saved.
+        def _digits_only(s):
+            return "".join(ch for ch in (s or "") if ch.isdigit())
+
+        def _verify_text_field(locator, expected, field_name, refill, attempts=3):
+            if not expected:
+                # Nothing expected here (e.g. contact no. genuinely blank
+                # in the uploaded sheet) — nothing to validate.
+                return
+
+            expected = expected.strip()
+            for attempt in range(1, attempts + 1):
+                actual = (locator.input_value() or "").strip()
+                if actual == expected:
+                    return
+                print(
+                    f"WARNING: '{field_name}' expected '{expected}' but "
+                    f"found '{actual}' (attempt {attempt}/{attempts}) — "
+                    f"Beacon likely cleared it, refilling..."
+                )
+                refill()
+                page.wait_for_timeout(400)
+
+            actual = (locator.input_value() or "").strip()
+            if actual != expected:
+                raise Exception(
+                    f"'{field_name}' still not filled correctly after "
+                    f"{attempts} attempts (expected '{expected}', got "
+                    f"'{actual}')"
+                )
+
+        def _verify_date_field(locator, expected_date_str, field_name, refill, attempts=3):
+            # Date inputs may auto-format what's typed (e.g. adding
+            # slashes), so compare digits only rather than exact strings.
+            expected_digits = _digits_only(expected_date_str)
+            for attempt in range(1, attempts + 1):
+                actual = locator.input_value() or ""
+                if actual.strip() and _digits_only(actual) == expected_digits:
+                    return
+                print(
+                    f"WARNING: '{field_name}' expected date digits "
+                    f"'{expected_digits}' but found '{actual}' (attempt "
+                    f"{attempt}/{attempts}) — Beacon likely cleared it, "
+                    f"refilling..."
+                )
+                refill()
+                page.wait_for_timeout(400)
+
+            actual = locator.input_value() or ""
+            if not (actual.strip() and _digits_only(actual) == expected_digits):
+                raise Exception(
+                    f"'{field_name}' still not filled correctly after "
+                    f"{attempts} attempts (expected date digits "
+                    f"'{expected_digits}', got '{actual}')"
+                )
+
+        def _verify_signatories_filled():
+            _verify_text_field(
+                prepared_by_input, billing_clerk_name,
+                "Prepared by (Billing Clerk / Accountant)", _fill_prepared_by,
+            )
+            _verify_text_field(
+                contact_input, billing_clerk_cp,
+                "Billing Clerk Contact No.", _fill_prepared_by_cp,
+            )
+            _verify_date_field(
+                admin_date_input, date_str,
+                "Date Signed (Admin)", _fill_admin_date,
+            )
+            _verify_text_field(
+                patient_rep_input, data.patient_name,
+                "Patient Representative", _fill_patient_representative,
+            )
+            _verify_date_field(
+                conforme_date_input, date_str,
+                "Date Signed (Conforme)", _fill_conforme_date,
+            )
+
+        self._step(
+            "Verifying Statement of Account fields filled correctly...",
+            _verify_signatories_filled,
+            critical=True,
+        )
         page.wait_for_timeout(300)
 
         def _save_signatories():
@@ -1079,19 +1268,73 @@ class CF2Automation:
         page.wait_for_timeout(500)
 
         def _open_claim_form_2():
+            """Opens Claim Form 2 in a new tab, retrying in place if Beacon
+            is slow to load rather than letting one timeout fail the whole
+            patient.
+
+            Beacon can intermittently take longer than Playwright's default
+            timeout to actually spawn/load the new tab — when that happens
+            we used to let the TimeoutError propagate straight up and fail
+            the patient on the spot. Now: on a timeout, close whatever tab
+            did (or didn't) come up, reload the Claim Forms list page to
+            get back to a clean state, and retry the click a few times
+            before finally giving up.
+            """
             nonlocal page
 
-            card = page.locator('a[href*="download-pdf/cf2"]').locator("..")
+            attempts = 3
+            last_error = None
 
-            card.hover()
+            for attempt in range(1, attempts + 1):
+                new_page = None
+                try:
+                    card = page.locator('a[href*="download-pdf/cf2"]').locator("..")
+                    card.hover()
 
-            with page.context.expect_page() as new_page_info:
-                page.locator(
-                    'a[href*="download-pdf/cf2"]'
-                ).click()
+                    with page.context.expect_page(timeout=20000) as new_page_info:
+                        page.locator(
+                            'a[href*="download-pdf/cf2"]'
+                        ).click()
 
-            page = new_page_info.value
-            page.wait_for_load_state("networkidle")
+                    new_page = new_page_info.value
+                    new_page.wait_for_load_state("networkidle", timeout=30000)
+
+                    # Success — hand the new tab back to the caller.
+                    page = new_page
+                    return
+                except PlaywrightTimeoutError as e:
+                    last_error = e
+                    print(
+                        f"WARNING: Opening Claim Form 2 timed out on "
+                        f"attempt {attempt}/{attempts} (Beacon loading too "
+                        f"long): {e}"
+                    )
+
+                    # Don't leave a half-loaded/stuck tab behind — close it
+                    # (if one actually opened) so the retry starts clean
+                    # instead of piling up orphaned tabs.
+                    if new_page is not None:
+                        try:
+                            new_page.close()
+                        except Exception:
+                            pass
+
+                    if attempt < attempts:
+                        print("Reloading Claim Forms page and retrying...")
+                        try:
+                            page.reload()
+                            page.wait_for_load_state("networkidle", timeout=15000)
+                        except Exception as reload_err:
+                            print(
+                                f"WARNING: Reload after timeout failed: "
+                                f"{reload_err}"
+                            )
+                        page.wait_for_timeout(1000)
+
+            raise Exception(
+                f"Could not open Claim Form 2 after {attempts} attempts — "
+                f"Beacon kept timing out: {last_error}"
+            )
 
         cf2_tab_opened = self._step(
             "Opening Claim Form 2...",
