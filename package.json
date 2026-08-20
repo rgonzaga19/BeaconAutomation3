@@ -1,6 +1,6 @@
 {
   "name": "beabots",
-  "version": "3.0.7",
+  "version": "3.0.8",
   "description": "Beabots — MEDICINE MAPPING/CF2/SOA automation suite (Electron front end + Python backend)",
   "main": "main.js",
   "author": "Romel Gonzaga",
