@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("beabots", {
   openCf4Window: () => ipcRenderer.invoke("open:cf4Window"),
   openSettingsWindow: () => ipcRenderer.invoke("open:settingsWindow"),
   openAboutWindow: () => ipcRenderer.invoke("open:aboutWindow"),
+  goHome: () => ipcRenderer.invoke("nav:goHome"),
 
   getVersion: () => ipcRenderer.invoke("app:getVersion"),
   getSettings: () => ipcRenderer.invoke("app:getSettings"),

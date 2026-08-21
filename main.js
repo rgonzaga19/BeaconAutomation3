@@ -24,6 +24,12 @@ const windows = {
 
 let downloadedInstaller = null;
 
+// Windows that are only ever allowed to be open (visible) one at a time,
+// and which hide the dashboard while they're open. Settings is the one
+// window explicitly allowed to stay open alongside the dashboard, so it's
+// deliberately left out of this list.
+const EXCLUSIVE_KEYS = ["cf2", "uploadSoa", "cf4", "about"];
+
 // ---------------------------------------------------------------------------
 // Theme (light/dark) — persisted to a small JSON file in userData so it
 // survives app restarts, and broadcast to every open window so they all
@@ -124,12 +130,54 @@ function waitForServer(onReady, attempt = 0) {
 }
 
 // ---------------------------------------------------------------------------
+// Single-window-visible-at-a-time navigation helpers
+// ---------------------------------------------------------------------------
+function hideDashboard() {
+  const dash = windows.dashboard;
+  if (dash && !dash.isDestroyed()) dash.hide();
+}
+
+function showDashboard() {
+  const dash = windows.dashboard;
+  if (dash && !dash.isDestroyed()) {
+    dash.show();
+    dash.focus();
+  } else {
+    createDashboardWindow();
+  }
+}
+
+// Hides every exclusive window other than `exceptKey` — used so opening one
+// (e.g. CF2) tucks away any other exclusive window (e.g. CF4) that was left
+// open, instead of stacking them.
+function hideOtherExclusiveWindows(exceptKey) {
+  EXCLUSIVE_KEYS.forEach((key) => {
+    if (key === exceptKey) return;
+    const win = windows[key];
+    if (win && !win.isDestroyed()) win.hide();
+  });
+}
+
+function anyOtherExclusiveWindowVisible(exceptKey) {
+  return EXCLUSIVE_KEYS.some((key) => {
+    if (key === exceptKey) return false;
+    const win = windows[key];
+    return win && !win.isDestroyed() && win.isVisible();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Generic frameless-window factory
 // ---------------------------------------------------------------------------
 function createWindow(key, htmlFile, options = {}) {
   const existing = windows[key];
   if (existing && !existing.isDestroyed()) {
+    if (options.exclusive) {
+      hideDashboard();
+      hideOtherExclusiveWindows(key);
+    }
     if (existing.isMinimized()) existing.restore();
+    existing.show();
     existing.focus();
     return existing;
   }
@@ -164,9 +212,21 @@ function createWindow(key, htmlFile, options = {}) {
   });
 
   win.loadFile(path.join(__dirname, "renderer", htmlFile));
-  win.once("ready-to-show", () => win.show());
+  win.once("ready-to-show", () => {
+    if (options.exclusive) {
+      hideDashboard();
+      hideOtherExclusiveWindows(key);
+    }
+    win.show();
+  });
   win.on("closed", () => {
     windows[key] = null;
+    // If this was an exclusive window and nothing else exclusive is still
+    // visible, bring the dashboard back so the user is never left with no
+    // window open at all.
+    if (options.exclusive && !anyOtherExclusiveWindowVisible(key)) {
+      showDashboard();
+    }
   });
 
   windows[key] = win;
@@ -188,6 +248,7 @@ function createCf2Window() {
     height: 710,
     minWidth: 1000,
     minHeight: 710,
+    exclusive: true,
   });
 }
 
@@ -197,6 +258,7 @@ function createUploadSoaWindow() {
     height: 710,
     minWidth: 1000,
     minHeight: 710,
+    exclusive: true,
   });
 }
 
@@ -206,9 +268,12 @@ function createCf4Window() {
     height: 780,
     minWidth: 700,
     minHeight: 600,
+    exclusive: true,
   });
 }
 
+// Settings is deliberately NOT exclusive — it's the one window allowed to
+// stay open alongside the dashboard.
 function createSettingsWindow() {
   return createWindow("settings", "settings.html", {
     width: 380,
@@ -224,6 +289,7 @@ function createAboutWindow() {
     minWidth: 700,
     minHeight: 620,
     resizable: false,
+    exclusive: true,
   });
 }
 
@@ -292,6 +358,16 @@ ipcMain.handle("open:settingsWindow", () => {
 
 ipcMain.handle("open:aboutWindow", () => {
   createAboutWindow();
+});
+
+// "Back to Home" button — hides whichever window called it and brings the
+// dashboard back. The calling window is hidden, not closed, so its state
+// (uploaded file, form fields, logs, etc.) is still there if the user
+// navigates back into it later.
+ipcMain.handle("nav:goHome", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed()) win.hide();
+  showDashboard();
 });
 
 // ---------------------------------------------------------------------------

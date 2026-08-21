@@ -36,3 +36,14 @@ function showModal(title, bodyText, { onOk } = {}) {
 function showError(title, message, opts) {
   showModal(title, message, opts);
 }
+
+// ---------------------------------------------------------------------------
+// "Back to Home" titlebar button — present on CF2, CF4, and Upload SOA
+// (not on the dashboard itself, and not on Settings, which is allowed to
+// stay open alongside the dashboard). Wired here once instead of per-window
+// so every renderer gets it for free. about.html doesn't load common.js, so
+// it wires its own copy of this in about.js.
+// ---------------------------------------------------------------------------
+document.getElementById("btnHome")?.addEventListener("click", () => {
+  window.beabots?.goHome();
+});

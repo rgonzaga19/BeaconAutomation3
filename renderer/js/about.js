@@ -141,6 +141,10 @@ async function loadAbout() {
 
 }
 
+document.getElementById("btnHome")?.addEventListener("click", () => {
+    window.beabots?.goHome();
+});
+
 btnClose.addEventListener("click", () => {
     window.close();
 });
