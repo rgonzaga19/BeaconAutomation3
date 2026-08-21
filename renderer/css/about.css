@@ -11,27 +11,33 @@
     padding: 20px 24px 0 24px;
 }
 
-/* ---------- Brand header ---------- */
-.brand-row {
+/* ---------- Two-column layout ---------- */
+.about-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    align-items: stretch;
+    gap: 18px;
+    /* Give the grid a floor so col-right has something concrete to stretch
+       to before content is measured, avoiding a first-paint collapse. */
+    min-height: 100%;
+}
+
+.col-left,
+.col-right {
     display: flex;
-    align-items: baseline;
-    gap: 14px;
-    margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+    min-width: 0;
 }
 
-.brand-name {
-    color: var(--text-pri);
-    font-family: var(--font-ui);
-    font-size: 26px;
-    font-weight: 800;
-    letter-spacing: 1.5px;
-}
-
-.version {
-    color: var(--text-sec);
-    font-size: 13px;
+/* Update panel now fills the full stretched height of .col-right (which
+   matches .col-left's height via .about-grid's align-items: stretch),
+   instead of shrink-wrapping its own content and leaving dead space
+   below the release notes. */
+.update-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 /* ---------- Panels ---------- */
@@ -58,40 +64,55 @@
     line-height: 1.6;
 }
 
-/* ---------- Feature list ---------- */
-.feature-list {
-    list-style: none;
+/* ---------- Feature grid ---------- */
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
     margin: 8px 14px 4px 14px;
-    padding: 10px 14px;
+}
+
+.feature-chip {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
     background: var(--bg-card);
     border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
     border-radius: var(--radius-md);
+    padding: 10px 12px;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
-.feature-list li {
+.feature-chip:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+}
+
+/* Medicine Mapping is the odd one out (5 features, 2 columns) — let it
+   span the full width instead of leaving a dangling half-empty row. */
+.feature-chip-wide {
+    grid-column: 1 / -1;
+}
+
+.feature-chip .feature-icon {
+    font-size: 16px;
+    line-height: 1.3;
+    flex: none;
+}
+
+.feature-chip .feature-title {
     color: var(--text-pri);
     font-family: var(--font-mono);
-    font-size: 12.5px;
-    line-height: 1.7;
-    padding-left: 14px;
-    position: relative;
-}
-
-.feature-list li strong {
-    color: var(--accent);
     font-weight: 700;
+    font-size: 12px;
+    margin-bottom: 2px;
 }
 
-.feature-list li::before {
-    content: "›";
-    position: absolute;
-    left: 0;
-    color: var(--accent);
-    font-weight: bold;
-}
-
-.feature-list li:not(:last-child) {
-    margin-bottom: 5px;
+.feature-chip .feature-desc {
+    color: var(--text-sec);
+    font-size: 10.5px;
+    line-height: 1.45;
 }
 
 /* ---------- Info rows (label left, value right) ---------- */
@@ -191,12 +212,13 @@
 /* ---------- Release notes list ---------- */
 .update-notes {
     list-style: none;
-    margin: 8px 14px 12px 14px;
+    margin: 8px 14px 14px 14px;
     padding: 10px 14px;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    max-height: 140px;
+    flex: 1;
+    min-height: 100px;
     overflow-y: auto;
 }
 
@@ -219,6 +241,35 @@
 
 .update-notes li:not(:last-child) {
     margin-bottom: 4px;
+}
+
+/* ---------- Download progress ---------- */
+.download-section {
+    margin-top: 12px;
+    padding: 0 14px;
+}
+
+.progress-track-about {
+    width: 100%;
+    height: 10px;
+    margin-top: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.progress-fill-about {
+    width: 0%;
+    height: 100%;
+    background: var(--success);
+    transition: width 0.15s linear;
+}
+
+.download-percent {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-sec);
 }
 
 /* ---------- Bottom action bar ---------- */

@@ -32,6 +32,15 @@ window.beabots.onUpdateProgress((data) => {
     downloadPercent.textContent =
         `${data.percent}% (${downloadedMB} MB / ${totalMB} MB)`;
 
+    // Mirror the percentage onto the button itself. The detailed progress
+    // bar lives inside the scrollable content area and can end up off-screen
+    // (e.g. if the left column pushes the panel taller than the window), but
+    // this button sits in the footer, which is always visible, so the user
+    // never loses track of an in-progress download.
+    if (data.percent < 100) {
+        btnDownload.textContent = `⬇ Downloading... ${data.percent}%`;
+    }
+
     if (data.percent >= 100) {
 
         downloadText.textContent = "Download Complete ✔";
@@ -97,6 +106,11 @@ async function loadAbout() {
             downloadProgressBar.style.width = "0%";
             downloadPercent.textContent = "0%";
             downloadText.textContent = "Downloading update...";
+
+            // Bring the detailed progress panel on screen in case it's
+            // currently scrolled out of view — a courtesy on top of the
+            // always-visible percentage now shown on this button.
+            downloadSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
             try {
 

@@ -46,6 +46,27 @@
     font-size: 10.5px;
     letter-spacing: 0.3px;
   }
+  .page-header .btn-home {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-panel);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-md);
+    font-family: var(--font-ui);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+  .page-header .btn-home:hover {
+    background: var(--accent-soft);
+    color: var(--text-pri);
+  }
 
   /* Row that holds the left-hand form workspace and the right-hand log
      panel side by side, both stretched to the same full height. */
@@ -371,7 +392,6 @@
       <span class="icon"><img src="../bot.ico" alt=""></span>
       <span class="title">CF2 AUTOMATION</span>
       <span class="spacer"></span>
-      <div class="titlebar-btn" id="btnHome" title="Back to Home">🏠</div>
       <div class="titlebar-btn" id="btnThemeToggle" title="Toggle theme">🌙</div>
       <div class="titlebar-btn" id="btnMinimize">─</div>
       <div class="titlebar-btn" id="btnMaximize">🗖</div>
@@ -384,6 +404,7 @@
         <div class="title">CF2</div>
         <div class="subtitle">Claims transmittal automation</div>
       </div>
+      <button class="btn-home" id="btnHome" title="Back to Home">🏠 Home</button>
     </div>
 
     <div class="main-row">

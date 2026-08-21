@@ -284,10 +284,10 @@ function createSettingsWindow() {
 
 function createAboutWindow() {
   return createWindow("about", "about.html", {
-    width: 700,
-    height: 620,
-    minWidth: 700,
-    minHeight: 620,
+    width: 860,
+    height: 680,
+    minWidth: 860,
+    minHeight: 680,
     resizable: false,
     exclusive: true,
   });

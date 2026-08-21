@@ -15,6 +15,69 @@
 <link rel="stylesheet" href="css/theme.css">
 <link rel="stylesheet" href="css/about.css">
 
+<style>
+  /* Page header — same pattern as CF2/CF4/Upload SOA, local to this file
+     like theirs, so about.css stays focused on the content below it. */
+  .page-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 24px 14px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .page-header .glyph {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    border-radius: var(--radius-md);
+    font-size: 16px;
+  }
+  .page-header .glyph img { width: 20px; height: 20px; object-fit: contain; display: block; }
+  .page-header .title-block { line-height: 1.35; }
+  .page-header .title {
+    font-family: var(--font-ui);
+    color: var(--text-pri);
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+  }
+  .page-header .subtitle {
+    color: var(--text-sec);
+    font-size: 11px;
+    margin-top: 3px;
+    letter-spacing: 0.2px;
+  }
+  .page-header .subtitle #version { color: var(--accent); font-weight: 600; }
+  .page-header .btn-home {
+    margin-left: auto;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-panel);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-md);
+    font-family: var(--font-ui);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+  .page-header .btn-home:hover {
+    background: var(--accent-soft);
+    color: var(--text-pri);
+  }
+</style>
+
 </head>
 
 <body>
@@ -26,156 +89,174 @@
         <div class="icon"><img src="../bot.ico" alt=""></div>
         <div class="title">ABOUT BEABOTS</div>
         <div class="spacer"></div>
-        <div class="titlebar-btn" id="btnHome" title="Back to Home">🏠</div>
         <div class="titlebar-btn" id="btnThemeToggle" title="Toggle theme">🌙</div>
         <div class="titlebar-btn" id="btnTitlebarClose">✕</div>
+    </div>
+
+    <!-- ================= Page header ================= -->
+    <div class="page-header">
+        <div class="glyph"><img src="../bot.ico" alt=""></div>
+        <div class="title-block">
+            <div class="title">BEABOTS</div>
+            <div class="subtitle">Desktop automation for PhilHealth Beacon claims &middot; <span id="version">Version ...</span></div>
+        </div>
+        <button class="btn-home" id="btnHome" title="Back to Home">🏠 Home</button>
     </div>
 
     <!-- ================= Content ================= -->
     <div class="about-content">
 
-        <div class="brand-row">
-            <div class="brand-name">BEABOTS</div>
-            <div class="version" id="version">Version ...</div>
-        </div>
+        <div class="about-grid">
 
-        <!-- ================= About ================= -->
+            <!-- ---------- Left column ---------- -->
+            <div class="col-left">
 
-        <div class="panel card-panel">
+                <div class="panel card-panel">
 
-            <div class="section-label">
-                <span>▸ ABOUT THIS APPLICATION</span>
-                <div class="rule"></div>
-            </div>
+                    <div class="section-label">
+                        <span>▸ ABOUT THIS APPLICATION</span>
+                        <div class="rule"></div>
+                    </div>
 
-            <div class="about-text">
-                <p>
-                    Beabots is a desktop automation tool built to speed up
-                    the encoding of PhilHealth Beacon claims. It handles the
-                    repetitive parts of claims processing so encoders can
-                    move through submissions faster and with fewer errors.
-                </p>
-            </div>
+                    <div class="about-text">
+                        <p>
+                            Beabots is a desktop automation tool built to speed up
+                            the encoding of PhilHealth Beacon claims. It handles the
+                            repetitive parts of claims processing so encoders can
+                            move through submissions faster and with fewer errors.
+                        </p>
+                    </div>
 
-            <div class="info-grid">
+                    <div class="info-grid">
 
-                <div class="info-row">
-                    <div class="label">Developer</div>
-                    <div class="value">Romel Gonzaga</div>
-                </div>
+                        <div class="info-row">
+                            <div class="label">Developer</div>
+                            <div class="value">Romel Gonzaga</div>
+                        </div>
 
-                <div class="info-row">
-                    <div class="label">Companion App</div>
-                    <div class="value">SOA Excel Generator</div>
-                </div>
+                        <div class="info-row">
+                            <div class="label">Companion App</div>
+                            <div class="value">SOA Excel Generator</div>
+                        </div>
 
-            </div>
+                    </div>
 
-            <div class="label" style="margin-top:14px;">Core Features</div>
+                    <div class="label" style="margin-top:14px;">Core Features</div>
 
-            <ul class="feature-list">
-                <li><strong>Auto Draft</strong> — automated drafting of claim entries</li>
-                <li><strong>CF2</strong> — automated encoding for PhilHealth CF2 forms</li>
-                <li><strong>CF4</strong> — automated encoding for PhilHealth CF4 forms</li>
-                <li><strong>Upload SOA</strong> — automated upload of Statement of Account files</li>
-                <li><strong>Medicine Mapping</strong> — maps medicines to their correct claim codes/entries</li>
-            </ul>
-
-        </div>
-
-        <!-- ================= License ================= -->
-
-        <div class="panel card-panel">
-
-            <div class="section-label">
-                <span>▸ LICENSE INFORMATION</span>
-                <div class="rule"></div>
-            </div>
-
-            <div class="info-grid">
-
-                <div class="info-row">
-                    <div class="label">Licensed To</div>
-                    <div class="value" id="owner">Loading...</div>
-                </div>
-
-                <div class="info-row">
-                    <div class="label">Plan</div>
-                    <div class="value" id="plan">Loading...</div>
-                </div>
-
-                <div class="info-row">
-                    <div class="label">License Expires</div>
-                    <div class="value" id="expires">Loading...</div>
-                </div>
-
-            </div>
-
-        </div>
-
-        <!-- ================= Update ================= -->
-
-        <div class="panel card-panel">
-
-            <div class="section-label">
-                <span>▸ APPLICATION UPDATES</span>
-                <div class="rule"></div>
-            </div>
-
-            <div class="info-row">
-                <div class="label">Latest Version</div>
-                <div class="value" id="latestVersion">Checking...</div>
-            </div>
-            <div
-                id="updateStatus"
-                class="update-status">
-                Checking for updates...
-            </div>
-
-            <div id="downloadSection" style="display:none;margin-top:12px;">
-
-                <div id="downloadText" class="label">
-                    Downloading update...
-                </div>
-
-                <div style="
-                    width:100%;
-                    height:10px;
-                    margin-top:8px;
-                    background:var(--bg-card);
-                    border:1px solid var(--border);
-                    border-radius:5px;
-                    overflow:hidden;
-                ">
-
-                    <div
-                        id="downloadProgressBar"
-                        style="
-                            width:0%;
-                            height:100%;
-                            background:var(--success);
-                            transition:width .15s linear;
-                        ">
+                    <div class="feature-grid">
+                        <div class="feature-chip">
+                            <span class="feature-icon">🆕</span>
+                            <div>
+                                <div class="feature-title">Auto Draft</div>
+                                <div class="feature-desc">Automated drafting of claim entries</div>
+                            </div>
+                        </div>
+                        <div class="feature-chip">
+                            <span class="feature-icon">📄</span>
+                            <div>
+                                <div class="feature-title">CF2</div>
+                                <div class="feature-desc">Automated encoding for PhilHealth CF2 forms</div>
+                            </div>
+                        </div>
+                        <div class="feature-chip">
+                            <span class="feature-icon">🧾</span>
+                            <div>
+                                <div class="feature-title">CF4</div>
+                                <div class="feature-desc">Automated encoding for PhilHealth CF4 forms</div>
+                            </div>
+                        </div>
+                        <div class="feature-chip">
+                            <span class="feature-icon">⇪</span>
+                            <div>
+                                <div class="feature-title">Upload SOA</div>
+                                <div class="feature-desc">Automated upload of Statement of Account files</div>
+                            </div>
+                        </div>
+                        <div class="feature-chip feature-chip-wide">
+                            <span class="feature-icon">💊</span>
+                            <div>
+                                <div class="feature-title">Medicine Mapping</div>
+                                <div class="feature-desc">Maps medicines to their correct claim codes/entries</div>
+                            </div>
+                        </div>
                     </div>
 
                 </div>
 
-                <div
-                    id="downloadPercent"
-                    style="
-                        margin-top:6px;
-                        font-size:12px;
-                        color:var(--text-sec);
-                    ">
-                    0%
+                <div class="panel card-panel">
+
+                    <div class="section-label">
+                        <span>▸ LICENSE INFORMATION</span>
+                        <div class="rule"></div>
+                    </div>
+
+                    <div class="info-grid">
+
+                        <div class="info-row">
+                            <div class="label">Licensed To</div>
+                            <div class="value" id="owner">Loading...</div>
+                        </div>
+
+                        <div class="info-row">
+                            <div class="label">Plan</div>
+                            <div class="value" id="plan">Loading...</div>
+                        </div>
+
+                        <div class="info-row">
+                            <div class="label">License Expires</div>
+                            <div class="value" id="expires">Loading...</div>
+                        </div>
+
+                    </div>
+
                 </div>
 
             </div>
 
-            <div class="label" style="margin-top:4px;">Release Notes</div>
+            <!-- ---------- Right column ---------- -->
+            <div class="col-right">
 
-            <ul id="releaseNotes" class="update-notes">
-            </ul>
+                <div class="panel card-panel update-panel">
+
+                    <div class="section-label">
+                        <span>▸ APPLICATION UPDATES</span>
+                        <div class="rule"></div>
+                    </div>
+
+                    <div class="info-row">
+                        <div class="label">Latest Version</div>
+                        <div class="value" id="latestVersion">Checking...</div>
+                    </div>
+                    <div
+                        id="updateStatus"
+                        class="update-status">
+                        Checking for updates...
+                    </div>
+
+                    <div id="downloadSection" class="download-section" style="display:none;">
+
+                        <div id="downloadText" class="label">
+                            Downloading update...
+                        </div>
+
+                        <div class="progress-track-about">
+                            <div id="downloadProgressBar" class="progress-fill-about"></div>
+                        </div>
+
+                        <div id="downloadPercent" class="download-percent">
+                            0%
+                        </div>
+
+                    </div>
+
+                    <div class="label" style="margin-top:4px;">Release Notes</div>
+
+                    <ul id="releaseNotes" class="update-notes">
+                    </ul>
+
+                </div>
+
+            </div>
 
         </div>
 

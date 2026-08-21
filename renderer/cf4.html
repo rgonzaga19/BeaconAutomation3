@@ -53,6 +53,28 @@
     font-size: 11px;
     margin-top: 2px;
   }
+  .page-header .btn-home {
+    margin-left: auto;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-panel);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-md);
+    font-family: var(--font-ui);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+  .page-header .btn-home:hover {
+    background: var(--accent-soft);
+    color: var(--text-pri);
+  }
 
   .form-body {
     flex: 1;
@@ -158,7 +180,6 @@
       <span class="icon"><img src="../bot.ico" alt=""></span>
       <span class="title">BEABOTS - CF4 AUTO ENCODE</span>
       <span class="spacer"></span>
-      <div class="titlebar-btn" id="btnHome" title="Back to Home">🏠</div>
       <div class="titlebar-btn" id="btnThemeToggle" title="Toggle theme">🌙</div>
       <div class="titlebar-btn" id="btnMinimize">─</div>
       <div class="titlebar-btn" id="btnMaximize">🗖</div>
@@ -171,6 +192,7 @@
         <div class="title-main">CF4 AUTO ENCODE — DEFAULT VALUES</div>
         <div class="subtitle">Used for every patient whenever "Include Auto Encode CF4" is checked on the dashboard.</div>
       </div>
+      <button class="btn-home" id="btnHome" title="Back to Home">🏠 Home</button>
     </div>
 
     <div class="form-body">
