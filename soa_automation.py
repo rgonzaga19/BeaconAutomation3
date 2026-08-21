@@ -15,7 +15,7 @@ if getattr(sys, "frozen", False):
     )
 
 from logger import logger
-from reports import report
+from reports import report, summarize_error
 import browser_session
 
 
@@ -206,12 +206,7 @@ def open_transmittals(page):
             logger.info("Search box is ready and enabled.")
             break
 
-        except Exception as e:
-            logger.debug(
-                f"Search box readiness attempt "
-                f"{attempt + 1}/{max_attempts} failed: {e}"
-            )
-
+        except Exception:
             if attempt < max_attempts - 1:
                 page.wait_for_timeout(800)
             else:
@@ -604,10 +599,8 @@ class SOAAutomation:
                             f"{title or text}"
                         )
 
-                    except Exception as e:
-                        logger.debug(
-                            f"Unable to inspect MED item {i}: {e}"
-                        )
+                    except Exception:
+                        pass
 
             except Exception as e:
                 logger.warning(
@@ -1282,7 +1275,7 @@ class SOAAutomation:
             )
 
             result["status"] = "failed"
-            result["message"] = str(e)
+            result["message"] = summarize_error(str(e))
 
             # ---------------------------------------------------------
             # RECOVERY

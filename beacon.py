@@ -834,11 +834,11 @@ def _process_transmittal(page, idx, transmittal_no, transmittals, auto_encode_cf
     validate_btn = page.locator("button", has_text="Validate Eligibility")
 
     if validate_btn.count() > 0:
-        print("Clicking Validate Eligibility...")
+        logger.info("Clicking Validate Eligibility...")
         validate_btn.first.click()
         _safe_networkidle(page)
     else:
-        print("No validation required — skipping.")
+        logger.info("No validation required — skipping.")
 
     # ── Move to CF2 ────────────────────────────────────────────
     logger.info("Opening CF2 tab...")

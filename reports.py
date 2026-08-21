@@ -1,6 +1,55 @@
 from datetime import datetime
 
 
+def summarize_error(raw_message):
+    """Turn a raw (often multi-line, technical) exception message into a
+    short, single-line, non-technical remark suitable for a report table.
+
+    Playwright call logs and stack traces span many lines — displaying
+    that directly as one report row's remarks breaks the table's layout.
+    This only affects what appears in the report; the full untouched
+    message should still reach the log file however the caller already
+    logs it (e.g. logger.error(str(e))) before this runs, so no
+    diagnostic detail is lost — it just isn't duplicated here.
+    """
+    if not raw_message:
+        return "Unknown error."
+
+    text = str(raw_message).strip()
+
+    if not text:
+        return "Unknown error."
+
+    lowered = text.lower()
+
+    if "timeout" in lowered or "timed out" in lowered:
+        return "Beacon is not responding (request timed out)."
+
+    if (
+        "net::err" in lowered
+        or "getaddrinfo" in lowered
+        or "econnrefused" in lowered
+        or "econnreset" in lowered
+        or "internet" in lowered
+    ):
+        return "Internet connection issue — please check your connection."
+
+    if (
+        "target page, context or browser has been closed" in lowered
+        or "target closed" in lowered
+    ):
+        return "Beacon browser session closed unexpectedly."
+
+    if "navigation" in lowered and (
+        "failed" in lowered or "timeout" in lowered
+    ):
+        return "Beacon page failed to load."
+
+    # Fallback for anything unrecognized: still short and non-technical,
+    # but generic, since we don't know what actually broke.
+    return "Beacon is unstable — check the detailed log for more information."
+
+
 class ReportManager:
     def __init__(self):
         self.results = []
@@ -38,7 +87,7 @@ class ReportManager:
         self.add(
             transmittal=transmittal,
             status="FAILED",
-            remarks=remarks
+            remarks=summarize_error(remarks)
         )
 
     def summary(self):
