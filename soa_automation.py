@@ -618,35 +618,31 @@ class SOAAutomation:
                 f"Verified MED items: {existing_charges_count}"
             )
 
-            if existing_charges_count > 0:
+            soa_already_uploaded = existing_charges_count > 0
+
+            if soa_already_uploaded:
 
                 logger.warning(
                     f"Charges table already has "
                     f"{existing_charges_count} verified "
-                    f"item(s). Skipping upload."
+                    f"item(s). Skipping upload — proceeding to "
+                    f"Statement of Account to re-verify discounts."
                 )
 
-                result["status"] = "skipped"
+                result["status"] = "success"
 
                 result["message"] = (
-                    f"Charges table already has "
+                    f"Charges table already had "
                     f"{existing_charges_count} "
-                    f"item(s) — SOA already uploaded."
+                    f"item(s) — SOA already uploaded. Re-verified "
+                    f"discounts without re-uploading."
                 )
 
-                is_last = (idx == total - 1)
+            else:
 
-                if not is_last:
-                    try:
-                        open_transmittals(self.page)
-                    except Exception:
-                        pass
-
-                return result
-
-            logger.success(
-                "Charges table is empty — proceeding with upload."
-            )
+                logger.success(
+                    "Charges table is empty — proceeding with upload."
+                )
 
             # ── Open PAYMENTS tab ─────────────────────────────────
             logger.info("Opening PAYMENTS tab...")
@@ -657,290 +653,292 @@ class SOAAutomation:
 
             logger.success("PAYMENTS tab opened")
 
-            # ── Upload Statement of Account ───────────────────────────
-            logger.info("Opening Statement of Account upload...")
-            logger.info("Clicking Upload Charges and Payment...")
+            if not soa_already_uploaded:
 
-            self.page.get_by_role(
-                "button",
-                name="UPLOAD CHARGES AND PAYMENT"
-            ).click()
+                # ── Upload Statement of Account ───────────────────────────
+                logger.info("Opening Statement of Account upload...")
+                logger.info("Clicking Upload Charges and Payment...")
 
-            try:
-                self.page.wait_for_selector(
-                    "input[type='file']",
-                    state="attached",
-                    timeout=10000
-                )
-            except Exception:
-                pass
+                self.page.get_by_role(
+                    "button",
+                    name="UPLOAD CHARGES AND PAYMENT"
+                ).click()
 
-            logger.success("Upload Charges and Payment clicked")
+                try:
+                    self.page.wait_for_selector(
+                        "input[type='file']",
+                        state="attached",
+                        timeout=10000
+                    )
+                except Exception:
+                    pass
 
-            # ── Locate SOA file automatically ─────────────────────────
-            surname_tokens, given_tokens = _split_surname_and_given(
-                self.patient_name
-            )
+                logger.success("Upload Charges and Payment clicked")
 
-            surname_key = _normalize("".join(surname_tokens))
-            bare_surname_key = (
-                _normalize(surname_tokens[-1])
-                if surname_tokens else ""
-            )
-            given_key = _normalize("".join(given_tokens))
-            given_initial = (
-                _normalize(given_tokens[0])[:1]
-                if given_tokens else ""
-            )
-
-            logger.info(f"Searching SOA in: {self.soa_folder}")
-            logger.info(
-                f"Surname: '{' '.join(surname_tokens)}' | "
-                f"Given name: '{' '.join(given_tokens)}'"
-            )
-
-            if not self.soa_folder.exists():
-                raise Exception(
-                    f"SOA folder does not exist: {self.soa_folder}"
+                # ── Locate SOA file automatically ─────────────────────────
+                surname_tokens, given_tokens = _split_surname_and_given(
+                    self.patient_name
                 )
 
-            all_files = []
+                surname_key = _normalize("".join(surname_tokens))
+                bare_surname_key = (
+                    _normalize(surname_tokens[-1])
+                    if surname_tokens else ""
+                )
+                given_key = _normalize("".join(given_tokens))
+                given_initial = (
+                    _normalize(given_tokens[0])[:1]
+                    if given_tokens else ""
+                )
 
-            for pattern in ("*.xlsx", "*.xls"):
-                all_files.extend(self.soa_folder.glob(pattern))
+                logger.info(f"Searching SOA in: {self.soa_folder}")
+                logger.info(
+                    f"Surname: '{' '.join(surname_tokens)}' | "
+                    f"Given name: '{' '.join(given_tokens)}'"
+                )
 
-            def _matching(tokens_to_match, require_exact_length=False):
-                """
-                Looks for tokens_to_match as a consecutive, whole-word run
-                inside each filename's tokens.
-                """
-                if not tokens_to_match:
-                    return []
+                if not self.soa_folder.exists():
+                    raise Exception(
+                        f"SOA folder does not exist: {self.soa_folder}"
+                    )
 
-                tokens_to_match = [t.upper() for t in tokens_to_match]
-                matches = []
+                all_files = []
 
-                allowed_after = set(given_tokens)
+                for pattern in ("*.xlsx", "*.xls"):
+                    all_files.extend(self.soa_folder.glob(pattern))
 
-                if given_initial:
-                    allowed_after.add(given_initial)
+                def _matching(tokens_to_match, require_exact_length=False):
+                    """
+                    Looks for tokens_to_match as a consecutive, whole-word run
+                    inside each filename's tokens.
+                    """
+                    if not tokens_to_match:
+                        return []
 
-                for f in all_files:
-                    tokens = _filename_tokens(f.name)
+                    tokens_to_match = [t.upper() for t in tokens_to_match]
+                    matches = []
 
-                    for i in range(
-                        len(tokens) - len(tokens_to_match) + 1
-                    ):
-                        if tokens[
-                            i:i + len(tokens_to_match)
-                        ] != tokens_to_match:
-                            continue
+                    allowed_after = set(given_tokens)
 
-                        if require_exact_length:
-                            preceding = tokens[i - 1] if i > 0 else None
+                    if given_initial:
+                        allowed_after.add(given_initial)
 
-                            if preceding in SURNAME_PARTICLES:
+                    for f in all_files:
+                        tokens = _filename_tokens(f.name)
+
+                        for i in range(
+                            len(tokens) - len(tokens_to_match) + 1
+                        ):
+                            if tokens[
+                                i:i + len(tokens_to_match)
+                            ] != tokens_to_match:
                                 continue
 
-                        after_idx = i + len(tokens_to_match)
+                            if require_exact_length:
+                                preceding = tokens[i - 1] if i > 0 else None
 
-                        following = (
-                            tokens[after_idx]
-                            if after_idx < len(tokens)
+                                if preceding in SURNAME_PARTICLES:
+                                    continue
+
+                            after_idx = i + len(tokens_to_match)
+
+                            following = (
+                                tokens[after_idx]
+                                if after_idx < len(tokens)
+                                else None
+                            )
+
+                            if following is not None and not following.isdigit():
+                                if following not in allowed_after:
+                                    continue
+
+                            matches.append(f)
+                            break
+
+                    return matches
+
+                def _has_given_name_marker(filename):
+                    """
+                    Returns True if the given name (or initial) is immediately
+                    before or after the matched surname as whole words.
+                    """
+                    tokens = _filename_tokens(filename)
+
+                    for i in range(
+                        len(tokens) - len(surname_tokens) + 1
+                    ):
+
+                        if tokens[
+                            i:i + len(surname_tokens)
+                        ] != surname_tokens:
+                            continue
+
+                        before = tokens[i - 1] if i > 0 else None
+
+                        after = (
+                            tokens[i + len(surname_tokens)]
+                            if i + len(surname_tokens) < len(tokens)
                             else None
                         )
 
-                        if following is not None and not following.isdigit():
-                            if following not in allowed_after:
-                                continue
+                        if given_tokens:
+                            if (
+                                before == given_tokens[0]
+                                or after == given_tokens[0]
+                            ):
+                                return True
 
-                        matches.append(f)
-                        break
+                        if given_initial:
+                            if (
+                                before == given_initial
+                                or after == given_initial
+                            ):
+                                return True
 
-                return matches
+                    return False
 
-            def _has_given_name_marker(filename):
-                """
-                Returns True if the given name (or initial) is immediately
-                before or after the matched surname as whole words.
-                """
-                tokens = _filename_tokens(filename)
-
-                for i in range(
-                    len(tokens) - len(surname_tokens) + 1
-                ):
-
-                    if tokens[
-                        i:i + len(surname_tokens)
-                    ] != surname_tokens:
-                        continue
-
-                    before = tokens[i - 1] if i > 0 else None
-
-                    after = (
-                        tokens[i + len(surname_tokens)]
-                        if i + len(surname_tokens) < len(tokens)
-                        else None
-                    )
-
-                    if given_tokens:
-                        if (
-                            before == given_tokens[0]
-                            or after == given_tokens[0]
-                        ):
-                            return True
-
-                    if given_initial:
-                        if (
-                            before == given_initial
-                            or after == given_initial
-                        ):
-                            return True
-
-                return False
-
-            # 1) Priority: exact-length surname match
-            matches = _matching(
-                surname_tokens,
-                require_exact_length=True
-            )
-
-            # 2) Fallback: loose surname match
-            if not matches:
-                loose_matches = _matching(surname_tokens)
-
-                if loose_matches:
-                    logger.info(
-                        f"No exact-length match for surname "
-                        f"'{surname_key}' — falling back to loose match: "
-                        f"{[f.name for f in loose_matches]}"
-                    )
-
-                matches = loose_matches
-
-            # 3) Fallback: surname without leading particle
-            if not matches and bare_surname_key != surname_key:
-
-                logger.info(
-                    f"No match for full surname '{surname_key}' — "
-                    f"trying bare surname '{bare_surname_key}'"
-                )
-
+                # 1) Priority: exact-length surname match
                 matches = _matching(
-                    [surname_tokens[-1]],
+                    surname_tokens,
                     require_exact_length=True
                 )
 
+                # 2) Fallback: loose surname match
                 if not matches:
+                    loose_matches = _matching(surname_tokens)
+
+                    if loose_matches:
+                        logger.info(
+                            f"No exact-length match for surname "
+                            f"'{surname_key}' — falling back to loose match: "
+                            f"{[f.name for f in loose_matches]}"
+                        )
+
+                    matches = loose_matches
+
+                # 3) Fallback: surname without leading particle
+                if not matches and bare_surname_key != surname_key:
+
+                    logger.info(
+                        f"No match for full surname '{surname_key}' — "
+                        f"trying bare surname '{bare_surname_key}'"
+                    )
+
                     matches = _matching(
-                        [surname_tokens[-1]]
+                        [surname_tokens[-1]],
+                        require_exact_length=True
                     )
 
-            if not matches:
-                raise Exception(
-                    f"No SOA file found for patient '{self.patient_name}': "
-                    f"no filename matched surname "
-                    f"'{' '.join(surname_tokens)}' "
-                    f"(or bare surname '{bare_surname_key}') "
-                    f"inside {self.soa_folder}. Skipping — will not guess."
-                )
+                    if not matches:
+                        matches = _matching(
+                            [surname_tokens[-1]]
+                        )
 
-            if len(matches) > 1:
-
-                narrowed = [
-                    f for f in matches
-                    if _has_given_name_marker(f.name)
-                ]
-
-                if not narrowed:
+                if not matches:
                     raise Exception(
-                        f"Multiple SOA files matched surname "
+                        f"No SOA file found for patient '{self.patient_name}': "
+                        f"no filename matched surname "
                         f"'{' '.join(surname_tokens)}' "
-                        f"({[f.name for f in matches]}) but none could be "
-                        f"confirmed against given name "
-                        f"'{ ' '.join(given_tokens) }'. "
-                        "Skipping — will not guess which file belongs "
-                        "to this patient."
+                        f"(or bare surname '{bare_surname_key}') "
+                        f"inside {self.soa_folder}. Skipping — will not guess."
                     )
 
-                if len(narrowed) > 1:
-                    raise Exception(
-                        f"Multiple SOA files still match patient "
-                        f"'{self.patient_name}' after narrowing by given "
-                        f"name ({[f.name for f in narrowed]}). Skipping — "
-                        "will not guess which file is correct."
+                if len(matches) > 1:
+
+                    narrowed = [
+                        f for f in matches
+                        if _has_given_name_marker(f.name)
+                    ]
+
+                    if not narrowed:
+                        raise Exception(
+                            f"Multiple SOA files matched surname "
+                            f"'{' '.join(surname_tokens)}' "
+                            f"({[f.name for f in matches]}) but none could be "
+                            f"confirmed against given name "
+                            f"'{ ' '.join(given_tokens) }'. "
+                            "Skipping — will not guess which file belongs "
+                            "to this patient."
+                        )
+
+                    if len(narrowed) > 1:
+                        raise Exception(
+                            f"Multiple SOA files still match patient "
+                            f"'{self.patient_name}' after narrowing by given "
+                            f"name ({[f.name for f in narrowed]}). Skipping — "
+                            "will not guess which file is correct."
+                        )
+
+                    logger.info(
+                        f"Multiple files matched surname "
+                        f"'{ ' '.join(surname_tokens) }' — narrowed to a "
+                        f"single exact match using given name"
                     )
+
+                    matches = narrowed
 
                 logger.info(
-                    f"Multiple files matched surname "
-                    f"'{ ' '.join(surname_tokens) }' — narrowed to a "
-                    f"single exact match using given name"
+                    f"Candidate SOA files: {[f.name for f in matches]}"
                 )
 
-                matches = narrowed
+                soa_file = matches[0]
 
-            logger.info(
-                f"Candidate SOA files: {[f.name for f in matches]}"
-            )
+                self.soa_file = str(soa_file)
 
-            soa_file = matches[0]
+                logger.success(f"SOA file found: {self.soa_file}")
 
-            self.soa_file = str(soa_file)
+                # ── Upload without Windows File Dialog ────────────────────
+                file_input = self.page.locator("input[type='file']")
 
-            logger.success(f"SOA file found: {self.soa_file}")
+                logger.info(
+                    f"File inputs found: {file_input.count()}"
+                )
 
-            # ── Upload without Windows File Dialog ────────────────────
-            file_input = self.page.locator("input[type='file']")
+                if file_input.count() > 0:
 
-            logger.info(
-                f"File inputs found: {file_input.count()}"
-            )
+                    logger.info("Uploading SOA...")
 
-            if file_input.count() > 0:
+                    file_input.set_input_files(self.soa_file)
 
-                logger.info("Uploading SOA...")
+                    try:
+                        self.page.wait_for_load_state(
+                            "networkidle",
+                            timeout=20000
+                        )
+                    except Exception:
+                        pass
 
-                file_input.set_input_files(self.soa_file)
+                    self.page.wait_for_timeout(500)
 
-                try:
-                    self.page.wait_for_load_state(
-                        "networkidle",
-                        timeout=20000
-                    )
-                except Exception:
-                    pass
+                    logger.success("SOA uploaded successfully.")
 
-                self.page.wait_for_timeout(500)
+                    result["status"] = "success"
+                    result["message"] = "SOA uploaded successfully"
 
-                logger.success("SOA uploaded successfully.")
+                else:
 
-                result["status"] = "success"
-                result["message"] = "SOA uploaded successfully"
+                    logger.info("Waiting for file chooser...")
 
-            else:
+                    with self.page.expect_file_chooser() as fc:
 
-                logger.info("Waiting for file chooser...")
+                        self.page.get_by_role(
+                            "button",
+                            name="UPLOAD CHARGES AND PAYMENT"
+                        ).click()
 
-                with self.page.expect_file_chooser() as fc:
+                    fc.value.set_files(self.soa_file)
 
-                    self.page.get_by_role(
-                        "button",
-                        name="UPLOAD CHARGES AND PAYMENT"
-                    ).click()
+                    try:
+                        self.page.wait_for_load_state(
+                            "networkidle",
+                            timeout=20000
+                        )
+                    except Exception:
+                        pass
 
-                fc.value.set_files(self.soa_file)
+                    self.page.wait_for_timeout(500)
 
-                try:
-                    self.page.wait_for_load_state(
-                        "networkidle",
-                        timeout=20000
-                    )
-                except Exception:
-                    pass
-
-                self.page.wait_for_timeout(500)
-
-                logger.success("SOA uploaded successfully.")
+                    logger.success("SOA uploaded successfully.")
 
             # ── Open Statement of Account ───────────────────────────────
             logger.info("Opening Statement of Account...")
