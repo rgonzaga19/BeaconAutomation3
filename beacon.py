@@ -185,6 +185,99 @@ class MedicineRecoveryRequired(Exception):
         )
 
 
+def _recover_transmittal(page, transmittal_no):
+    """Page/transmittal-level recovery after a MedicineRecoveryRequired.
+
+    Reload the page -> return to Transmittals (existing open_transmittals)
+    -> re-search for the SAME transmittal number (existing
+    _search_transmittal), so the retry that follows re-acquires every
+    locator fresh instead of reusing anything from before the freeze.
+
+    Deliberately does NOT reopen Manage Claims / the claim / CF4 here —
+    _process_transmittal already does that from the beginning as part of
+    its normal flow, which is what gets called again after this returns.
+
+    Does not restart the browser/context — page-level only, per Step 3I.
+    Every step here is individually bounded so a broken recovery can't
+    hang the whole batch.
+
+    Returns True if the transmittal was found again after recovery,
+    False otherwise (caller treats False as recovery having failed).
+    """
+    logger.info(f"[WATCHDOG] Reloading Beacon page...")
+
+    try:
+        page.reload(wait_until="domcontentloaded", timeout=15000)
+    except PlaywrightTimeoutError:
+        logger.warning("[WATCHDOG] page.reload() timed out — continuing anyway")
+    except Exception as e:
+        logger.warning(f"[WATCHDOG] page.reload() failed: {e}")
+
+    logger.info("[WATCHDOG] Returning to Transmittals...")
+
+    try:
+        open_transmittals(page)
+    except Exception as e:
+        logger.error(f"[WATCHDOG] Recovery failed — open_transmittals() error: {e}")
+        return False
+
+    logger.info(f"[WATCHDOG] Searching transmittal {transmittal_no}...")
+
+    try:
+        found = _search_transmittal(page, transmittal_no)
+    except Exception as e:
+        logger.error(f"[WATCHDOG] Recovery failed — search error: {e}")
+        return False
+
+    if found:
+        logger.success(f"[WATCHDOG] Transmittal {transmittal_no} found — recovery successful")
+    else:
+        logger.error(f"[WATCHDOG] Transmittal {transmittal_no} NOT found after recovery")
+
+    return found
+
+
+def _raise_medicine_recovery(
+    page,
+    transmittal_no,
+    medicine_index,
+    medicine_name,
+    stage,
+    start_time,
+    error=None
+):
+    """Shared path for triggering transmittal-level recovery from the
+    medicine loop: capture evidence, then raise MedicineRecoveryRequired.
+
+    Used both by _check_medicine_operation_timeout (duration-based) and
+    directly by action failures elsewhere in the medicine loop (e.g. a
+    medicine option never appearing in the "Please Select the Medicine"
+    popup, which raises Playwright's own action timeout independently of
+    MEDICINE_OPERATION_TIMEOUT) — any stage that should trigger the same
+    recovery goes through this one path instead of duplicating the
+    capture+raise pairing at each call site.
+    """
+    elapsed = time.monotonic() - start_time
+
+    _capture_medicine_recovery_state(
+        page,
+        stage,
+        transmittal_no=transmittal_no,
+        medicine_index=medicine_index,
+        medicine_name=medicine_name,
+        elapsed=elapsed,
+        error=error
+    )
+
+    raise MedicineRecoveryRequired(
+        transmittal_no=transmittal_no,
+        medicine_index=medicine_index,
+        medicine_name=medicine_name,
+        stage=stage,
+        elapsed=elapsed
+    )
+
+
 def _check_medicine_operation_timeout(
     start_time,
     page,
@@ -195,31 +288,22 @@ def _check_medicine_operation_timeout(
 ):
     """Detect when a medicine operation has taken too long.
 
-    On timeout: captures recovery evidence (screenshot + page state, via
-    _capture_medicine_recovery_state) and raises MedicineRecoveryRequired.
-    Does not recover or reload anything itself — that's the transmittal
-    loop's job, catching this exception.
+    On timeout: triggers recovery via _raise_medicine_recovery. Does not
+    recover or reload anything itself — that's the transmittal loop's
+    job, catching MedicineRecoveryRequired.
 
     Returns None if the operation is still within the time limit.
     """
     elapsed = time.monotonic() - start_time
 
     if elapsed >= MEDICINE_OPERATION_TIMEOUT:
-        _capture_medicine_recovery_state(
+        _raise_medicine_recovery(
             page,
+            transmittal_no,
+            medicine_index,
+            medicine_name,
             stage,
-            transmittal_no=transmittal_no,
-            medicine_index=medicine_index,
-            medicine_name=medicine_name,
-            elapsed=elapsed
-        )
-
-        raise MedicineRecoveryRequired(
-            transmittal_no=transmittal_no,
-            medicine_index=medicine_index,
-            medicine_name=medicine_name,
-            stage=stage,
-            elapsed=elapsed
+            start_time
         )
 
 
@@ -691,6 +775,723 @@ def _apply_cf4_checkbox(page, cf4_data, settings_key, dom_name, label, specify_s
             _try_step(f"{label} remarks set to '{specify_text}'", _fill_specify)
 
 
+def _process_transmittal(page, idx, transmittal_no, transmittals, auto_encode_cf4, cf4_data):
+    """Process a single transmittal end-to-end: search, open claim,
+    CF2, CF4/Auto Encode CF4, Course in the Ward, Drugs/Medicines, save.
+
+    Extracted unchanged (Step 3C) from the body that used to live
+    directly inside run()'s per-transmittal loop, so the retry wrapper
+    in run() can call this a second time on the same transmittal after
+    a MedicineRecoveryRequired, without duplicating this logic.
+
+    No selectors, business rules, or logic were changed by this move —
+    only indentation, to fit as a function body instead of an inline
+    loop body.
+    """
+    transmittal_no = str(transmittal_no).strip()
+
+    logger.info("\n" + "=" * 60)
+    logger.info(f"TRANSMITTAL {idx + 1}/{len(transmittals)} : {transmittal_no}")
+    logger.info("=" * 60)
+
+    # ── Search patient ─────────────────────────────────────────
+    # ── Search transmittal ─────────────────────────────────────
+    if not _search_transmittal(page, transmittal_no):
+        logger.warning(f"TRANSMITTAL NOT FOUND: {transmittal_no}")
+        report.skipped(
+            transmittal=transmittal_no,
+            remarks="Transmittal not found"
+        )                
+
+        return
+
+    # ── Open first row → Manage Claims ─────────────────────────
+    logger.info("Opening row menu...")
+    first_row = page.locator("tbody tr").first
+    logger.info("Row found.")
+    first_row.locator("button").last.click()
+    _safe_networkidle(page)
+
+    logger.info("Clicking Manage Claims...")
+    page.get_by_text("Manage Claims", exact=True).click()
+    _safe_networkidle(page)
+    logger.success("SUCCESS: Manage Claims opened")
+
+    # ── Open claim → Manage ────────────────────────────────────
+    logger.info("Opening claim row menu...")
+    claim_row = page.locator("tbody tr").first
+    claim_row.locator("button").last.click()
+    _safe_networkidle(page)
+
+    logger.info("Clicking Manage...")
+    page.get_by_text("Manage", exact=True).click()
+    _safe_networkidle(page)
+    logger.success("SUCCESS: PHIC Claim Details opened")
+
+    # --------------------------------------------------
+    # Validate Eligibility (if button appears)
+    # --------------------------------------------------
+    validate_btn = page.locator("button", has_text="Validate Eligibility")
+
+    if validate_btn.count() > 0:
+        print("Clicking Validate Eligibility...")
+        validate_btn.first.click()
+        _safe_networkidle(page)
+    else:
+        print("No validation required — skipping.")
+
+    # ── Move to CF2 ────────────────────────────────────────────
+    logger.info("Opening CF2 tab...")
+    page.get_by_text("CF2", exact=True).click()
+
+    _safe_networkidle(page)
+
+    page.wait_for_selector(
+        "input[id*='sessionDate-DateMM-DD-YYYY']",
+        timeout=10000
+    )
+
+    # --------------------------------------------------
+    # Read all Session Dates
+    # --------------------------------------------------
+    logger.info("Reading session dates...")
+
+    session_date_inputs = page.locator(
+        "input[id*='sessions'][id*='sessionDate-DateMM-DD-YYYY']"
+    )
+
+    count = session_date_inputs.count()
+    logger.info(f"Found {count} session date(s).")
+
+    session_dates = []
+
+    for i in range(count):
+        value = session_date_inputs.nth(i).input_value().strip()
+        session_dates.append(value)
+        logger.info(f"Session {i + 1}: {value}")
+
+    logger.info(f"All Session Dates: {session_dates}")
+        
+    # ── Move to CF4 ────────────────────────────────────────────
+    logger.info("Opening CF4 tab...")
+    page.get_by_text("CF4", exact=True).click()
+    _safe_networkidle(page)
+
+    logger.info("Clicking MOVE TO CF4...")
+    page.get_by_role("button", name="MOVE TO CF4").click()
+
+    logger.info("Waiting for confirmation dialog...")
+    page.wait_for_selector("text=Proceed", timeout=10000)
+    page.locator("text=Proceed").first.click(force=True)
+    _safe_networkidle(page)
+    logger.success("SUCCESS: Moved to CF4")
+    # REASON FOR ADMISSION - History of Present Illness / Pertinent Past Medical History ____________
+
+    # --------------------------------------------------
+    # REASON FOR ADMISSION
+    # Fill only empty fields with "N/A"
+    # --------------------------------------------------
+
+    def _fill_if_empty(locator, field_name):
+        try:
+            value = locator.input_value().strip()
+
+            if not value:
+                logger.info(f"{field_name} is empty. Filling with 'N/A'.")
+
+                locator.click()
+                locator.press("Control+A")
+                locator.press("Backspace")
+                locator.fill("N/A")
+            else:
+                logger.info(
+                    f"{field_name} already has value. Skipping."
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"Unable to process {field_name}: {e}"
+            )
+
+    history_locator = page.locator(
+        'textarea[name="historyOfPresentIllness"]'
+    ).first
+
+    pertinent_locator = page.locator(
+        'textarea[name="pertinentPastMedicalHistory"]'
+    ).first
+
+    _fill_if_empty(
+        history_locator,
+        "History of Present Illness"
+    )
+
+    _fill_if_empty(
+        pertinent_locator,
+        "Pertinent Past Medical History"
+    )
+
+
+
+
+
+    # ── Auto Encode CF4 (test) ──────────────────────────────────
+    if auto_encode_cf4:
+        logger.info("Auto Encode CF4 option is enabled.")
+
+        chief_complaint_text = cf4_data["chief_complaint"]
+
+        def _set_chief_complaint():
+            box = page.locator('textarea[name="chiefComplaint"]').first
+            box.click()
+            box.press("Control+A")
+            box.press("Backspace")
+            box.fill(chief_complaint_text)
+
+        _try_step(
+            f"Chief Complaint set to '{chief_complaint_text}'",
+            _set_chief_complaint
+        )
+
+        history_of_present_illness_text = cf4_data["history_of_present_illness"]
+
+        def _set_history_of_present_illness():
+            box = page.locator('textarea[name="historyOfPresentIllness"]').first
+            box.click()
+            box.press("Control+A")
+            box.press("Backspace")
+            box.fill(history_of_present_illness_text)
+
+        _try_step(
+            f"History of Present Illness set to '{history_of_present_illness_text}'",
+            _set_history_of_present_illness
+        )
+
+        pertinent_past_medical_history_text = cf4_data["pertinent_past_medical_history"]
+
+        def _set_pertinent_past_medical_history():
+            box = page.locator('textarea[name="pertinentPastMedicalHistory"]').first
+            box.click()
+            box.press("Control+A")
+            box.press("Backspace")
+            box.fill(pertinent_past_medical_history_text)
+
+        _try_step(
+            f"Pertinent Past Medical History set to '{pertinent_past_medical_history_text}'",
+            _set_pertinent_past_medical_history
+        )
+
+        if cf4_data["general_survey_awake_alert"]:
+            _try_step(
+                "General Survey set to 'Awake and alert'",
+                lambda: page.get_by_text("Awake and alert", exact=True).click(force=True)
+            )
+
+        # All Pertinent Signs and Symptoms + Physical
+        # Examination checkboxes (and their paired "Others"
+        # specify text) live in one table — see
+        # CF4_CHECKBOX_FIELDS above.
+        for settings_key, dom_name, label, specify_key, specify_dom_name in CF4_CHECKBOX_FIELDS:
+            _apply_cf4_checkbox(
+                page, cf4_data, settings_key, dom_name, label,
+                specify_key, specify_dom_name
+            )
+
+        _try_step(
+            "CF4 form saved",
+            lambda: page.get_by_role("button", name="SAVE").click(force=True)
+        )
+
+        # --------------------------------------------------
+        # COURSE IN THE WARD
+        # --------------------------------------------------
+        def _open_course_in_the_ward():
+            course_btn = page.locator("button:has-text('COURSE IN THE WARD')").first
+
+            course_btn.wait_for(state="visible", timeout=10000)
+            course_btn.scroll_into_view_if_needed()
+            page.wait_for_timeout(500)
+
+            try:
+                course_btn.click(timeout=3000)
+            except Exception:
+                logger.warning("Normal click failed. Trying force click...")
+                try:
+                    course_btn.click(force=True, timeout=3000)
+                except Exception:
+                    logger.warning("Force click failed. Trying JavaScript click...")
+                    course_btn.evaluate("el => el.click()")
+
+            _safe_networkidle(page)
+
+        _try_step(
+            "Opened COURSE IN THE WARD",
+            _open_course_in_the_ward
+        )
+
+        def _course_in_ward_table_has_entries():
+            """True if the COURSE IN THE WARD modal's table
+            already has at least one row. Used to skip
+            re-adding entries on a recovery retry — this
+            table's rows persist once added and reopening the
+            modal does not reset it (confirmed via live
+            screenshot), so re-running the ADD loop after a
+            retry would create duplicate ward entries for the
+            same session date(s).
+
+            Anchored on the ADD button rather than the header
+            text: an earlier version anchored on the
+            "DOCTOR'S ORDER / ACTION" header text, but
+            Playwright's text locator silently resolves to zero
+            matches instead of raising when the text isn't found
+            as one contiguous node — so that check always read
+            as "0 rows" and never actually detected existing
+            entries (confirmed live: it kept re-adding rows on
+            a second run instead of skipping). The ADD button is
+            already used elsewhere in this same modal
+            (_click_add_course_in_ward) and reliably resolves, so
+            anchoring on it instead is safer than trying to
+            target the per-row three-dot menu button directly —
+            that button exposes no name/distinguishing attribute
+            in the accessibility tree, so it isn't safely
+            targetable on its own.
+
+            On any error here, this fails toward "assume entries
+            exist" (skip adding) rather than risking a duplicate —
+            flagged via a warning so it's visible if it happens.
+            """
+            try:
+                add_btn = page.locator("button:has-text('ADD')").first
+                course_container = add_btn.locator(
+                    "xpath=ancestor::div[.//table][1]"
+                )
+                row_count = course_container.locator("tbody tr").count()
+
+                logger.info(
+                    f"Course in the Ward: found {row_count} existing row(s)"
+                )
+
+                return row_count > 0
+            except Exception as e:
+                logger.warning(
+                    f"[WATCHDOG] Could not check existing Course in "
+                    f"the Ward entries: {e}. Assuming entries exist "
+                    f"to avoid duplicate creation — verify manually."
+                )
+                return True
+
+        course_already_has_entries = _course_in_ward_table_has_entries()
+
+        if course_already_has_entries:
+            logger.info(
+                "Course in the Ward already has entries (recovery "
+                "retry) — skipping re-add to avoid duplicates."
+            )
+        else:
+            def _click_add_course_in_ward():
+                add_btn = page.locator("button:has-text('ADD')").first
+
+                add_btn.wait_for(state="visible", timeout=10000)
+                add_btn.scroll_into_view_if_needed()
+                page.wait_for_timeout(300)
+
+                try:
+                    add_btn.click(timeout=3000)
+                except Exception:
+                    logger.warning("Normal click failed. Trying force click...")
+                    try:
+                        add_btn.click(force=True, timeout=3000)
+                    except Exception:
+                        logger.warning("Force click failed. Trying JavaScript click...")
+                        add_btn.evaluate("el => el.click()")
+
+                _safe_networkidle(page)
+                    
+            _try_step(
+                "Clicked ADD",
+                _click_add_course_in_ward
+            )
+
+            # --------------------------------------------------
+            # Add Course in the Ward entries
+            # --------------------------------------------------
+            course_order_text = cf4_data["course_in_ward_order"]
+
+            for session_date in session_dates:
+
+                logger.info(f"Adding Course in the Ward entry for {session_date}")
+
+                # Beacon auto-formats the dashes
+                date_to_type = session_date.replace("-", "")
+
+                # Date
+                date_input = page.locator('input[name="date"]').first
+                date_input.click()
+                date_input.press("Control+A")
+                date_input.press("Backspace")
+                date_input.type(date_to_type, delay=80)
+
+                # Doctor's Order / Action
+                order_input = page.locator('textarea[name="order"]').first
+                order_input.click()
+                order_input.press("Control+A")
+                order_input.press("Backspace")
+                order_input.fill(course_order_text)
+
+                # Save
+                save_btn = page.locator("button:has-text('SAVE')").last
+                save_btn.click(force=True)
+
+                _safe_networkidle(page)
+
+                logger.success(f"Saved Course in the Ward entry for {session_date}")
+
+                # Open Add dialog again for the next session
+                if session_date != session_dates[-1]:
+                    _click_add_course_in_ward()
+
+        def _close_course_in_the_ward():
+            close_btn = page.locator("button:has-text('CLOSE')").first
+
+            close_btn.wait_for(state="visible", timeout=10000)
+            close_btn.scroll_into_view_if_needed()
+            page.wait_for_timeout(300)
+
+            try:
+                close_btn.click(timeout=3000)
+            except Exception:
+                logger.warning("Normal click failed. Trying force click...")
+                try:
+                    close_btn.click(force=True, timeout=3000)
+                except Exception:
+                    logger.warning("Force click failed. Trying JavaScript click...")
+                    close_btn.evaluate("el => el.click()")
+
+            _safe_networkidle(page)
+
+
+        _try_step(
+            "Closed COURSE IN THE WARD",
+            _close_course_in_the_ward
+        )
+
+        logger.info("Auto Encode CF4 finished.")
+
+    # ── Map medicines ──────────────────────────────────────────
+    logger.info("Clicking DRUGS / MEDICINES...")
+    page.get_by_text("DRUGS / MEDICINES", exact=True).click()
+    _safe_networkidle(page)
+
+    rows = page.locator("tbody tr")
+
+    if rows.count() == 0:
+        logger.error("No medicines found. Skipping patient.")
+        report.skipped(
+            transmittal=transmittal_no,
+            remarks="No medicines found"
+        )
+
+        open_transmittals(page)
+        return
+
+    rows = page.locator("tbody tr")
+
+    for i in range(rows.count()):
+        logger.info(f"\nProcessing medicine {i + 1}/{rows.count()}")
+
+        _log_page_state(
+            page,
+            "START MEDICINE",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1
+        )
+
+        medicine_start_time = time.monotonic()
+
+        row = rows.nth(i)
+        text = row.inner_text().upper()
+        logger.info(text)
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+        medicine_name = ""
+
+        for line in lines:
+            if (
+                "REGULAR HEPARIN" in line or
+                "PNSS" in line or
+                "HEMODIALYSIS" in line or
+                "EPOETIN ALFA" in line or
+                "EPOETIN BETA" in line
+            ):
+                medicine_name = line
+                break
+
+        logger.info(f"Medicine Name: {medicine_name}")
+        _log_page_state(
+            page,
+            "MEDICINE IDENTIFIED",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        # Determine medicine search term
+        if "REGULAR HEPARIN" in medicine_name:
+            search_term = "HEPARIN"
+        elif "PNSS" in medicine_name:
+            search_term = "SODIUM"
+        elif "HEMODIALYSIS ACID" in medicine_name:
+            search_term = "HEMOD"
+        elif "HEMODIALYSIS BICARBONATE" in medicine_name:
+            search_term = "HEMOD"
+        elif "EPOETIN ALFA" in medicine_name:
+            search_term = "EPO"
+        elif "EPOETIN BETA" in medicine_name:
+            search_term = "EPO"
+
+        else:
+            logger.warning("Unknown medicine, skipping row...")
+            continue
+
+        # Open 3-dot menu → Map Medicine
+        _log_page_state(
+            page,
+            "OPENING MAP MEDICINE",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        row.locator("button").click()
+        page.wait_for_timeout(1000)
+
+        page.get_by_text("Map Medicine", exact=True).click()
+
+        _log_page_state(
+            page,
+            "MAP MEDICINE OPENED",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        _safe_networkidle(page)
+
+        _log_page_state(
+            page,
+            "MAP MEDICINE NETWORK WAIT COMPLETE",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        # Type search term
+        search_box = page.locator('input[id*="SearchMedicinetoMap"]').first
+        search_box.click()
+        search_box.press("Control+A")
+        search_box.press("Backspace")
+                    
+        _log_page_state(
+            page,
+            f"SEARCHING MEDICINE: {search_term}",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        search_box.type(search_term, delay=100)
+
+        _log_page_state(
+            page,
+            "WAITING FOR MEDICINE RESULTS",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        page.wait_for_selector('input[type="radio"]', timeout=10000)
+
+        logger.info(f"Textbox value: {search_box.input_value()}")
+
+        _log_page_state(
+            page,
+            "MEDICINE RESULTS LOADED",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        _check_medicine_operation_timeout(
+            medicine_start_time,
+            page,
+            transmittal_no,
+            i + 1,
+            medicine_name,
+            "MEDICINE RESULTS LOADED"
+        )
+
+        popup = (
+            page.locator("text=Please Select the Medicine")
+            .locator("..")
+            .locator("..")
+        )
+
+        logger.info("=" * 50)
+        logger.info(f"Row {i} detected as:")
+        logger.info(repr(text))
+        logger.info("=" * 50)
+
+        # Select the correct medicine in the popup.
+        #
+        # Wrapped: each branch below uses Playwright's own default action
+        # timeout (independent of MEDICINE_OPERATION_TIMEOUT) when the
+        # medicine's exact text never appears in the popup — e.g. a
+        # mismatched/renamed medicine name. That previously surfaced as a
+        # raw PlaywrightTimeoutError, which isn't MedicineRecoveryRequired,
+        # so it skipped recovery entirely and the transmittal was marked
+        # failed with zero retries (confirmed live testing). Any failure
+        # in this block now goes through the same recovery path as a
+        # duration-based timeout.
+        try:
+            if "REGULAR HEPARIN" in medicine_name:
+                popup.locator(
+                    "label",
+                    has_text="HEPARIN ( As SODIUM) 5000 IU/Ml SOLUTION 5 Ml VIAL"
+                ).locator("xpath=../..").click(force=True)
+                logger.info("Selected HEPARIN 5000 IU/ML 5 ML VIAL")
+
+            elif "PNSS" in medicine_name:
+                popup.get_by_text(
+                    "0.9% SODIUM CHLORIDE SOLUTION 1 L BOTTLE",
+                    exact=True
+                ).click(force=True)
+                logger.info("Selected PNSS 1L BOTTLE")
+
+            elif "HEMODIALYSIS ACID" in medicine_name:
+                popup.get_by_text(
+                    "HEMODIALYSIS ACID CONCENTRATE (DIALYSATE ACETATE BASED) 5 L",
+                    exact=True
+                ).click(force=True)
+                logger.info("Selected HEMODIALYSIS ACID 5L")
+
+            elif "HEMODIALYSIS BICARBONATE" in medicine_name:
+                option = popup.get_by_text(
+                    "HEMODIALYSIS BICARBONATE CONCENTRATE 5 L",
+                    exact=True
+                )
+
+                logger.info(f"About to click: {option.inner_text()}")
+
+                option.click(force=True)
+
+                logger.info("Selected HEMODIALYSIS BICARBONATE 5L")
+
+            elif "EPOETIN ALFA" in medicine_name:
+                popup.get_by_text(
+                    "EPOETIN ALFA (RECOMBINANT HUMAN ERYTHROPOIETIN) 4000 IU/Ml SOLUTION 1 Ml PRE-FILLED GLASS SYRINGE",
+                    exact=True
+                ).click(force=True)
+                logger.info("Selected EPOETIN ALFA 4000 IU/ML 1 ML")
+
+            elif "EPOETIN BETA" in medicine_name:
+                popup.get_by_text(
+                    "EPOETIN BETA (RECOMBINANT ERYTHROPOIETIN) 5000IU/0.3Ml SOLUTION PRE-FILLED SYRINGE WITH NEEDLE",
+                    exact=True
+                ).click(force=True)
+                logger.info("Selected EPOETIN BETA 5000 IU/0.3 ML")
+
+        except MedicineRecoveryRequired:
+            raise
+        except Exception as e:
+            logger.error(f"[WATCHDOG] Failed to select medicine in popup: {e}")
+            _raise_medicine_recovery(
+                page,
+                transmittal_no,
+                i + 1,
+                medicine_name,
+                "SELECTING MEDICINE IN POPUP",
+                medicine_start_time,
+                error=str(e)
+            )
+
+        _log_page_state(
+            page,
+            "CLICKING CONTINUE",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        continue_btn = page.get_by_role("button", name="CONTINUE")
+        continue_btn.click(force=True)
+
+        _log_page_state(
+            page,
+            "CONTINUE CLICKED",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        _safe_networkidle(page)
+
+        _log_page_state(
+            page,
+            "MEDICINE NETWORK WAIT COMPLETE",
+            transmittal_no=transmittal_no,
+            medicine_index=i + 1,
+            medicine_name=medicine_name
+        )
+
+        _check_medicine_operation_timeout(
+            medicine_start_time,
+            page,
+            transmittal_no,
+            i + 1,
+            medicine_name,
+            "MEDICINE NETWORK WAIT COMPLETE"
+        )
+
+        logger.info("Medicine mapped")
+
+    logger.success("All medicines mapped")
+
+    page.get_by_role("button", name="CLOSE").click()
+
+    logger.info("Drugs and Medicines window closed")
+
+    # Click E-CLAIMS intentionally
+    page.get_by_role("button", name="E-CLAIMS").click()
+
+    # Beacon asks whether to save changes
+    page.wait_for_selector("text=SAVE CHANGES", timeout=10000)
+
+    page.get_by_role(
+        "button",
+        name="SAVE CHANGES",
+        exact=True
+    ).click()
+
+    logger.info("Navigation save confirmation clicked")
+
+    # Don't trust networkidle alone here — wait for the dialog
+    # to actually resolve (with a fallback settle buffer) before
+    # doing anything else, so the follow-up navigation below
+    # can't cut off an in-flight save.
+    _wait_for_save_changes_complete(page)
+    _safe_networkidle(page)
+
+    logger.success(f"SUCCESS: Patient {transmittal_no} saved")
+    report.success(
+        transmittal=transmittal_no,
+        mapped=rows.count()
+    )
+            
+
+    open_transmittals(page)
+
+
 def run(transmittals, auto_encode_cf4=False, cf4_data=None):
     cf4_data = {**DEFAULT_CF4_DATA, **(cf4_data or {})}
 
@@ -708,642 +1509,70 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
         open_transmittals(page)
 
         # ── Patient loop ───────────────────────────────────────────────────
+
+        MAX_RECOVERY_RETRIES = 1
+
         for idx, transmittal_no in enumerate(transmittals):
-            try:
-                transmittal_no = str(transmittal_no).strip()
+            transmittal_no = str(transmittal_no).strip()
+            attempt = 0
+            last_error = None
 
-                logger.info("\n" + "=" * 60)
-                logger.info(f"TRANSMITTAL {idx + 1}/{len(transmittals)} : {transmittal_no}")
-                logger.info("=" * 60)
+            while True:
+                try:
+                    _process_transmittal(
+                        page, idx, transmittal_no, transmittals,
+                        auto_encode_cf4, cf4_data
+                    )
+                    last_error = None
+                    break
 
-                # ── Search patient ─────────────────────────────────────────
-                # ── Search transmittal ─────────────────────────────────────
-                if not _search_transmittal(page, transmittal_no):
-                    logger.warning(f"TRANSMITTAL NOT FOUND: {transmittal_no}")
-                    report.skipped(
-                        transmittal=transmittal_no,
-                        remarks="Transmittal not found"
-                    )                
+                except MedicineRecoveryRequired as e:
+                    last_error = e
 
+                    if attempt >= MAX_RECOVERY_RETRIES:
+                        logger.error(
+                            f"[WATCHDOG] Maximum recovery attempts reached "
+                            f"for transmittal {transmittal_no}"
+                        )
+                        break
+
+                    logger.warning(
+                        f"[WATCHDOG] Recovery attempt {attempt + 1}/"
+                        f"{MAX_RECOVERY_RETRIES} for transmittal {transmittal_no}"
+                    )
+
+                    recovered = _recover_transmittal(page, transmittal_no)
+                    attempt += 1
+
+                    if not recovered:
+                        logger.error(
+                            "[WATCHDOG] Recovery failed — could not re-find "
+                            f"transmittal {transmittal_no}"
+                        )
+                        break
+
+                    logger.info(
+                        f"[WATCHDOG] Reprocessing transmittal {transmittal_no} "
+                        f"(attempt {attempt + 1})"
+                    )
                     continue
 
-                # ── Open first row → Manage Claims ─────────────────────────
-                logger.info("Opening row menu...")
-                first_row = page.locator("tbody tr").first
-                logger.info("Row found.")
-                first_row.locator("button").last.click()
-                _safe_networkidle(page)
-
-                logger.info("Clicking Manage Claims...")
-                page.get_by_text("Manage Claims", exact=True).click()
-                _safe_networkidle(page)
-                logger.success("SUCCESS: Manage Claims opened")
-
-                # ── Open claim → Manage ────────────────────────────────────
-                logger.info("Opening claim row menu...")
-                claim_row = page.locator("tbody tr").first
-                claim_row.locator("button").last.click()
-                _safe_networkidle(page)
-
-                logger.info("Clicking Manage...")
-                page.get_by_text("Manage", exact=True).click()
-                _safe_networkidle(page)
-                logger.success("SUCCESS: PHIC Claim Details opened")
-
-                # --------------------------------------------------
-                # Validate Eligibility (if button appears)
-                # --------------------------------------------------
-                validate_btn = page.locator("button", has_text="Validate Eligibility")
-
-                if validate_btn.count() > 0:
-                    print("Clicking Validate Eligibility...")
-                    validate_btn.first.click()
-                    _safe_networkidle(page)
-                else:
-                    print("No validation required — skipping.")
-
-                # ── Move to CF2 ────────────────────────────────────────────
-                logger.info("Opening CF2 tab...")
-                page.get_by_text("CF2", exact=True).click()
-
-                _safe_networkidle(page)
-
-                page.wait_for_selector(
-                    "input[id*='sessionDate-DateMM-DD-YYYY']",
-                    timeout=10000
-                )
-
-                # --------------------------------------------------
-                # Read all Session Dates
-                # --------------------------------------------------
-                logger.info("Reading session dates...")
-
-                session_date_inputs = page.locator(
-                    "input[id*='sessions'][id*='sessionDate-DateMM-DD-YYYY']"
-                )
-
-                count = session_date_inputs.count()
-                logger.info(f"Found {count} session date(s).")
-
-                session_dates = []
-
-                for i in range(count):
-                    value = session_date_inputs.nth(i).input_value().strip()
-                    session_dates.append(value)
-                    logger.info(f"Session {i + 1}: {value}")
-
-                logger.info(f"All Session Dates: {session_dates}")
-        
-                # ── Move to CF4 ────────────────────────────────────────────
-                logger.info("Opening CF4 tab...")
-                page.get_by_text("CF4", exact=True).click()
-                _safe_networkidle(page)
-
-                logger.info("Clicking MOVE TO CF4...")
-                page.get_by_role("button", name="MOVE TO CF4").click()
-
-                logger.info("Waiting for confirmation dialog...")
-                page.wait_for_selector("text=Proceed", timeout=10000)
-                page.locator("text=Proceed").first.click(force=True)
-                _safe_networkidle(page)
-                logger.success("SUCCESS: Moved to CF4")
-                # REASON FOR ADMISSION - History of Present Illness / Pertinent Past Medical History ____________
-
-                # --------------------------------------------------
-                # REASON FOR ADMISSION
-                # Fill only empty fields with "N/A"
-                # --------------------------------------------------
-
-                def _fill_if_empty(locator, field_name):
-                    try:
-                        value = locator.input_value().strip()
-
-                        if not value:
-                            logger.info(f"{field_name} is empty. Filling with 'N/A'.")
-
-                            locator.click()
-                            locator.press("Control+A")
-                            locator.press("Backspace")
-                            locator.fill("N/A")
-                        else:
-                            logger.info(
-                                f"{field_name} already has value. Skipping."
-                            )
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Unable to process {field_name}: {e}"
-                        )
-
-                history_locator = page.locator(
-                    'textarea[name="historyOfPresentIllness"]'
-                ).first
-
-                pertinent_locator = page.locator(
-                    'textarea[name="pertinentPastMedicalHistory"]'
-                ).first
-
-                _fill_if_empty(
-                    history_locator,
-                    "History of Present Illness"
-                )
-
-                _fill_if_empty(
-                    pertinent_locator,
-                    "Pertinent Past Medical History"
-                )
-
-
-
-
-
-                # ── Auto Encode CF4 (test) ──────────────────────────────────
-                if auto_encode_cf4:
-                    logger.info("Auto Encode CF4 option is enabled.")
-
-                    chief_complaint_text = cf4_data["chief_complaint"]
-
-                    def _set_chief_complaint():
-                        box = page.locator('textarea[name="chiefComplaint"]').first
-                        box.click()
-                        box.press("Control+A")
-                        box.press("Backspace")
-                        box.fill(chief_complaint_text)
-
-                    _try_step(
-                        f"Chief Complaint set to '{chief_complaint_text}'",
-                        _set_chief_complaint
-                    )
-
-                    history_of_present_illness_text = cf4_data["history_of_present_illness"]
-
-                    def _set_history_of_present_illness():
-                        box = page.locator('textarea[name="historyOfPresentIllness"]').first
-                        box.click()
-                        box.press("Control+A")
-                        box.press("Backspace")
-                        box.fill(history_of_present_illness_text)
-
-                    _try_step(
-                        f"History of Present Illness set to '{history_of_present_illness_text}'",
-                        _set_history_of_present_illness
-                    )
-
-                    pertinent_past_medical_history_text = cf4_data["pertinent_past_medical_history"]
-
-                    def _set_pertinent_past_medical_history():
-                        box = page.locator('textarea[name="pertinentPastMedicalHistory"]').first
-                        box.click()
-                        box.press("Control+A")
-                        box.press("Backspace")
-                        box.fill(pertinent_past_medical_history_text)
-
-                    _try_step(
-                        f"Pertinent Past Medical History set to '{pertinent_past_medical_history_text}'",
-                        _set_pertinent_past_medical_history
-                    )
-
-                    if cf4_data["general_survey_awake_alert"]:
-                        _try_step(
-                            "General Survey set to 'Awake and alert'",
-                            lambda: page.get_by_text("Awake and alert", exact=True).click(force=True)
-                        )
-
-                    # All Pertinent Signs and Symptoms + Physical
-                    # Examination checkboxes (and their paired "Others"
-                    # specify text) live in one table — see
-                    # CF4_CHECKBOX_FIELDS above.
-                    for settings_key, dom_name, label, specify_key, specify_dom_name in CF4_CHECKBOX_FIELDS:
-                        _apply_cf4_checkbox(
-                            page, cf4_data, settings_key, dom_name, label,
-                            specify_key, specify_dom_name
-                        )
-
-                    _try_step(
-                        "CF4 form saved",
-                        lambda: page.get_by_role("button", name="SAVE").click(force=True)
-                    )
-
-                    # --------------------------------------------------
-                    # COURSE IN THE WARD
-                    # --------------------------------------------------
-                    def _open_course_in_the_ward():
-                        course_btn = page.locator("button:has-text('COURSE IN THE WARD')").first
-
-                        course_btn.wait_for(state="visible", timeout=10000)
-                        course_btn.scroll_into_view_if_needed()
-                        page.wait_for_timeout(500)
-
-                        try:
-                            course_btn.click(timeout=3000)
-                        except Exception:
-                            logger.warning("Normal click failed. Trying force click...")
-                            try:
-                                course_btn.click(force=True, timeout=3000)
-                            except Exception:
-                                logger.warning("Force click failed. Trying JavaScript click...")
-                                course_btn.evaluate("el => el.click()")
-
-                        _safe_networkidle(page)
-
-                    _try_step(
-                        "Opened COURSE IN THE WARD",
-                        _open_course_in_the_ward
-                    )
-
-                    def _click_add_course_in_ward():
-                        add_btn = page.locator("button:has-text('ADD')").first
-
-                        add_btn.wait_for(state="visible", timeout=10000)
-                        add_btn.scroll_into_view_if_needed()
-                        page.wait_for_timeout(300)
-
-                        try:
-                            add_btn.click(timeout=3000)
-                        except Exception:
-                            logger.warning("Normal click failed. Trying force click...")
-                            try:
-                                add_btn.click(force=True, timeout=3000)
-                            except Exception:
-                                logger.warning("Force click failed. Trying JavaScript click...")
-                                add_btn.evaluate("el => el.click()")
-
-                        _safe_networkidle(page)
-                    
-                    _try_step(
-                        "Clicked ADD",
-                        _click_add_course_in_ward
-                    )
-
-                    # --------------------------------------------------
-                    # Add Course in the Ward entries
-                    # --------------------------------------------------
-                    course_order_text = cf4_data["course_in_ward_order"]
-
-                    for session_date in session_dates:
-
-                        logger.info(f"Adding Course in the Ward entry for {session_date}")
-
-                        # Beacon auto-formats the dashes
-                        date_to_type = session_date.replace("-", "")
-
-                        # Date
-                        date_input = page.locator('input[name="date"]').first
-                        date_input.click()
-                        date_input.press("Control+A")
-                        date_input.press("Backspace")
-                        date_input.type(date_to_type, delay=80)
-
-                        # Doctor's Order / Action
-                        order_input = page.locator('textarea[name="order"]').first
-                        order_input.click()
-                        order_input.press("Control+A")
-                        order_input.press("Backspace")
-                        order_input.fill(course_order_text)
-
-                        # Save
-                        save_btn = page.locator("button:has-text('SAVE')").last
-                        save_btn.click(force=True)
-
-                        _safe_networkidle(page)
-
-                        logger.success(f"Saved Course in the Ward entry for {session_date}")
-
-                        # Open Add dialog again for the next session
-                        if session_date != session_dates[-1]:
-                            _click_add_course_in_ward()
-
-                    def _close_course_in_the_ward():
-                        close_btn = page.locator("button:has-text('CLOSE')").first
-
-                        close_btn.wait_for(state="visible", timeout=10000)
-                        close_btn.scroll_into_view_if_needed()
-                        page.wait_for_timeout(300)
-
-                        try:
-                            close_btn.click(timeout=3000)
-                        except Exception:
-                            logger.warning("Normal click failed. Trying force click...")
-                            try:
-                                close_btn.click(force=True, timeout=3000)
-                            except Exception:
-                                logger.warning("Force click failed. Trying JavaScript click...")
-                                close_btn.evaluate("el => el.click()")
-
-                        _safe_networkidle(page)
-
-
-                    _try_step(
-                        "Closed COURSE IN THE WARD",
-                        _close_course_in_the_ward
-                    )
-
-                    logger.info("Auto Encode CF4 finished.")
-
-                # ── Map medicines ──────────────────────────────────────────
-                logger.info("Clicking DRUGS / MEDICINES...")
-                page.get_by_text("DRUGS / MEDICINES", exact=True).click()
-                _safe_networkidle(page)
-
-                rows = page.locator("tbody tr")
-
-                if rows.count() == 0:
-                    logger.error("No medicines found. Skipping patient.")
-                    report.skipped(
-                        transmittal=transmittal_no,
-                        remarks="No medicines found"
-                    )
-
-                    open_transmittals(page)
-                    continue
-
-                rows = page.locator("tbody tr")
-
-                for i in range(rows.count()):
-                    logger.info(f"\nProcessing medicine {i + 1}/{rows.count()}")
-
-                    _log_page_state(
-                        page,
-                        "START MEDICINE",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1
-                    )
-
-                    medicine_start_time = time.monotonic()
-
-                    row = rows.nth(i)
-                    text = row.inner_text().upper()
-                    logger.info(text)
-
-                    lines = [line.strip() for line in text.splitlines() if line.strip()]
-
-                    medicine_name = ""
-
-                    for line in lines:
-                        if (
-                            "REGULAR HEPARIN" in line or
-                            "PNSS" in line or
-                            "HEMODIALYSIS" in line or
-                            "EPOETIN ALFA" in line or
-                            "EPOETIN BETA" in line
-                        ):
-                            medicine_name = line
-                            break
-
-                    logger.info(f"Medicine Name: {medicine_name}")
-                    _log_page_state(
-                        page,
-                        "MEDICINE IDENTIFIED",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    # Determine medicine search term
-                    if "REGULAR HEPARIN" in medicine_name:
-                        search_term = "HEPARIN"
-                    elif "PNSS" in medicine_name:
-                        search_term = "SODIUM"
-                    elif "HEMODIALYSIS ACID" in medicine_name:
-                        search_term = "HEMOD"
-                    elif "HEMODIALYSIS BICARBONATE" in medicine_name:
-                        search_term = "HEMOD"
-                    elif "EPOETIN ALFA" in medicine_name:
-                        search_term = "EPO"
-                    elif "EPOETIN BETA" in medicine_name:
-                        search_term = "EPO"
-
-                    else:
-                        logger.warning("Unknown medicine, skipping row...")
-                        continue
-
-                    # Open 3-dot menu → Map Medicine
-                    _log_page_state(
-                        page,
-                        "OPENING MAP MEDICINE",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    row.locator("button").click()
-                    page.wait_for_timeout(1000)
-
-                    page.get_by_text("Map Medicine", exact=True).click()
-
-                    _log_page_state(
-                        page,
-                        "MAP MEDICINE OPENED",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    _safe_networkidle(page)
-
-                    _log_page_state(
-                        page,
-                        "MAP MEDICINE NETWORK WAIT COMPLETE",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    # Type search term
-                    search_box = page.locator('input[id*="SearchMedicinetoMap"]').first
-                    search_box.click()
-                    search_box.press("Control+A")
-                    search_box.press("Backspace")
-                    
-                    _log_page_state(
-                        page,
-                        f"SEARCHING MEDICINE: {search_term}",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    search_box.type(search_term, delay=100)
-
-                    _log_page_state(
-                        page,
-                        "WAITING FOR MEDICINE RESULTS",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    page.wait_for_selector('input[type="radio"]', timeout=10000)
-
-                    logger.info(f"Textbox value: {search_box.input_value()}")
-
-                    _log_page_state(
-                        page,
-                        "MEDICINE RESULTS LOADED",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    _check_medicine_operation_timeout(
-                        medicine_start_time,
-                        page,
-                        transmittal_no,
-                        i + 1,
-                        medicine_name,
-                        "MEDICINE RESULTS LOADED"
-                    )
-
-                    popup = (
-                        page.locator("text=Please Select the Medicine")
-                        .locator("..")
-                        .locator("..")
-                    )
-
-                    logger.info("=" * 50)
-                    logger.info(f"Row {i} detected as:")
-                    logger.info(repr(text))
-                    logger.info("=" * 50)
-
-                    # Select the correct medicine in the popup
-                    if "REGULAR HEPARIN" in medicine_name:
-                        popup.locator(
-                            "label",
-                            has_text="HEPARIN ( As SODIUM) 5000 IU/Ml SOLUTION 5 Ml VIAL"
-                        ).locator("xpath=../..").click(force=True)
-                        logger.info("Selected HEPARIN 5000 IU/ML 5 ML VIAL")
-
-                    elif "PNSS" in medicine_name:
-                        popup.get_by_text(
-                            "0.9% SODIUM CHLORIDE SOLUTION 1 L BOTTLE",
-                            exact=True
-                        ).click(force=True)
-                        logger.info("Selected PNSS 1L BOTTLE")
-
-                    elif "HEMODIALYSIS ACID" in medicine_name:
-                        popup.get_by_text(
-                            "HEMODIALYSIS ACID CONCENTRATE (DIALYSATE ACETATE BASED) 5 L",
-                            exact=True
-                        ).click(force=True)
-                        logger.info("Selected HEMODIALYSIS ACID 5L")
-
-                    elif "HEMODIALYSIS BICARBONATE" in medicine_name:
-                        option = popup.get_by_text(
-                            "HEMODIALYSIS BICARBONATE CONCENTRATE 5 L",
-                            exact=True
-                        )
-
-                        logger.info(f"About to click: {option.inner_text()}")
-
-                        option.click(force=True)
-
-                        logger.info("Selected HEMODIALYSIS BICARBONATE 5L")
-
-                    elif "EPOETIN ALFA" in medicine_name:
-                        popup.get_by_text(
-                            "EPOETIN ALFA (RECOMBINANT HUMAN ERYTHROPOIETIN) 4000 IU/Ml SOLUTION 1 Ml PRE-FILLED GLASS SYRINGE",
-                            exact=True
-                        ).click(force=True)
-                        logger.info("Selected EPOETIN ALFA 4000 IU/ML 1 ML")
-
-                    elif "EPOETIN BETA" in medicine_name:
-                        popup.get_by_text(
-                            "EPOETIN BETA (RECOMBINANT ERYTHROPOIETIN) 5000IU/0.3Ml SOLUTION PRE-FILLED SYRINGE WITH NEEDLE",
-                            exact=True
-                        ).click(force=True)
-                        logger.info("Selected EPOETIN BETA 5000 IU/0.3 ML")
-
-                    _log_page_state(
-                        page,
-                        "CLICKING CONTINUE",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    continue_btn = page.get_by_role("button", name="CONTINUE")
-                    continue_btn.click(force=True)
-
-                    _log_page_state(
-                        page,
-                        "CONTINUE CLICKED",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    _safe_networkidle(page)
-
-                    _log_page_state(
-                        page,
-                        "MEDICINE NETWORK WAIT COMPLETE",
-                        transmittal_no=transmittal_no,
-                        medicine_index=i + 1,
-                        medicine_name=medicine_name
-                    )
-
-                    _check_medicine_operation_timeout(
-                        medicine_start_time,
-                        page,
-                        transmittal_no,
-                        i + 1,
-                        medicine_name,
-                        "MEDICINE NETWORK WAIT COMPLETE"
-                    )
-
-                    logger.info("Medicine mapped")
-
-                logger.success("All medicines mapped")
-
-                page.get_by_role("button", name="CLOSE").click()
-
-                logger.info("Drugs and Medicines window closed")
-
-                # Click E-CLAIMS intentionally
-                page.get_by_role("button", name="E-CLAIMS").click()
-
-                # Beacon asks whether to save changes
-                page.wait_for_selector("text=SAVE CHANGES", timeout=10000)
-
-                page.get_by_role(
-                    "button",
-                    name="SAVE CHANGES",
-                    exact=True
-                ).click()
-
-                logger.info("Navigation save confirmation clicked")
-
-                # Don't trust networkidle alone here — wait for the dialog
-                # to actually resolve (with a fallback settle buffer) before
-                # doing anything else, so the follow-up navigation below
-                # can't cut off an in-flight save.
-                _wait_for_save_changes_complete(page)
-                _safe_networkidle(page)
-
-                logger.success(f"SUCCESS: Patient {transmittal_no} saved")
-                report.success(
-                    transmittal=transmittal_no,
-                    mapped=rows.count()
-                )
-            
-
-                open_transmittals(page)
-
-            except Exception as e:
-                logger.error(f"\nERROR on patient {idx + 1} ({transmittal_no}): {e}")                
+                except Exception as e:
+                    last_error = e
+                    break
+
+            if last_error is not None:
+                logger.error(f"\nERROR on patient {idx + 1} ({transmittal_no}): {last_error}")
                 logger.warning("Skipping to next patient...")
                 report.failed(
                     transmittal=transmittal_no,
-                    remarks=str(e)
+                    remarks=str(last_error)
                 )
 
                 try:
                     open_transmittals(page)
-
-                except:
+                except Exception:
                     pass
-
-                continue
 
         summary = report.summary()
 
