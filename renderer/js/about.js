@@ -17,6 +17,21 @@ const downloadProgressBar = document.getElementById("downloadProgressBar");
 const downloadPercent = document.getElementById("downloadPercent");
 const downloadText = document.getElementById("downloadText");
 
+// Set by main.js loading this page as about.html?forced=1 when a
+// mandatory update is pending — see main.js's createAboutWindow(true).
+// In this mode there's no dashboard to go back to, so Home is hidden.
+// The download still requires the user to click Download themselves —
+// it's not started automatically — but Close/titlebar-close are wired
+// (below) to quit the whole app rather than just this window, since
+// that's the only way out of a mandatory update besides installing it.
+const forcedMode = new URLSearchParams(window.location.search).get("forced") === "1";
+const forcedBanner = document.getElementById("forcedBanner");
+
+if (forcedMode) {
+    document.body.classList.add("forced-mode");
+    if (forcedBanner) forcedBanner.style.display = "flex";
+}
+
 window.beabots.onUpdateProgress((data) => {
 
     downloadSection.style.display = "block";
@@ -89,6 +104,15 @@ async function loadAbout() {
         btnDownload.disabled = true;
         btnDownload.textContent = "Up To Date";
 
+        // Safety valve: this window was only opened in forced mode because
+        // the main process's own check found a version mismatch. If this
+        // independent check disagrees, don't leave the user stuck looking
+        // at an unclosable "up to date" screen — lift the lock and let the
+        // dashboard open normally.
+        if (forcedMode) {
+            window.beabots?.releaseForceLock?.();
+        }
+
     } else {
 
         updateStatusEl.textContent = "▲ Update Available";
@@ -156,14 +180,32 @@ async function loadAbout() {
 }
 
 document.getElementById("btnHome")?.addEventListener("click", () => {
+    if (forcedMode) return;
     window.beabots?.goHome();
 });
 
+// In forced mode there's no dashboard to return to, so Close doesn't just
+// close this window — it exits the app entirely. This is the only way out
+// if the user picks "Install Later" after downloading. Relaunching will
+// re-trigger this same locked screen until they actually install.
+if (forcedMode) {
+    btnClose.textContent = "Exit App";
+    btnClose.title = "Quit Beabots";
+}
+
 btnClose.addEventListener("click", () => {
+    if (forcedMode) {
+        window.beabots?.quitApp?.();
+        return;
+    }
     window.close();
 });
 
 btnTitlebarClose.addEventListener("click", () => {
+    if (forcedMode) {
+        window.beabots?.quitApp?.();
+        return;
+    }
     window.close();
 });
 

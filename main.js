@@ -24,6 +24,17 @@ const windows = {
 
 let downloadedInstaller = null;
 
+// True whenever a mandatory update is being enforced — the forced About
+// window's close is blocked while this is set, and it's cleared the moment
+// the user confirms Install (so app.quit() during the install flow isn't
+// blocked by the very lock it set up) or if the update turns out to no
+// longer be needed (see app:releaseForceLock below).
+let forcedUpdateActive = false;
+
+// True for the brief window between the user confirming "Install" and
+// app.quit() actually tearing everything down — see app:installUpdate.
+let quittingForUpdate = false;
+
 // Windows that are only ever allowed to be open (visible) one at a time,
 // and which hide the dashboard while they're open. Settings is the one
 // window explicitly allowed to stay open alongside the dashboard, so it's
@@ -211,7 +222,10 @@ function createWindow(key, htmlFile, options = {}) {
     ...options.windowOverrides,
   });
 
-  win.loadFile(path.join(__dirname, "renderer", htmlFile));
+  win.loadFile(
+    path.join(__dirname, "renderer", htmlFile),
+    options.search ? { search: options.search } : undefined
+  );
   win.once("ready-to-show", () => {
     if (options.exclusive) {
       hideDashboard();
@@ -223,8 +237,9 @@ function createWindow(key, htmlFile, options = {}) {
     windows[key] = null;
     // If this was an exclusive window and nothing else exclusive is still
     // visible, bring the dashboard back so the user is never left with no
-    // window open at all.
-    if (options.exclusive && !anyOtherExclusiveWindowVisible(key)) {
+    // window open at all. Skipped while the app is quitting to install an
+    // update — no point flashing a dashboard open a moment before exit.
+    if (options.exclusive && !quittingForUpdate && !anyOtherExclusiveWindowVisible(key)) {
       showDashboard();
     }
   });
@@ -282,15 +297,47 @@ function createSettingsWindow() {
   });
 }
 
-function createAboutWindow() {
-  return createWindow("about", "about.html", {
+function createAboutWindow(forced = false) {
+  const win = createWindow("about", "about.html", {
     width: 860,
     height: 680,
     minWidth: 860,
     minHeight: 680,
     resizable: false,
     exclusive: true,
+    search: forced ? "forced=1" : undefined,
   });
+
+  if (forced) {
+    forcedUpdateActive = true;
+    win.setClosable(false);
+    win.on("close", (event) => {
+      if (forcedUpdateActive) event.preventDefault();
+    });
+  }
+
+  return win;
+}
+
+// Fetches the worker's /update payload and returns it only if it names a
+// mandatory version the user isn't on yet — null in every other case
+// (including any network failure, so a flaky connection at launch can
+// never lock someone out of an app they already have).
+async function checkMandatoryUpdate() {
+  try {
+    const response = await fetch(
+      "https://beabot-license.gonzagaromel19.workers.dev/update"
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data.mandatory && data.version && data.version !== app.getVersion()) {
+      return data;
+    }
+    return null;
+  } catch (err) {
+    console.error("[update] mandatory update check failed:", err);
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -365,9 +412,48 @@ ipcMain.handle("open:aboutWindow", () => {
 // (uploaded file, form fields, logs, etc.) is still there if the user
 // navigates back into it later.
 ipcMain.handle("nav:goHome", (event) => {
+  if (forcedUpdateActive) return; // no bypassing a required update
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.hide();
   showDashboard();
+});
+
+// Safety valve for the forced-update window: if it decides (independently
+// of the main process's own check) that the user is actually already on
+// the latest version, it calls this to lift the lock instead of leaving
+// them stuck looking at an unclosable window with nothing to download.
+ipcMain.handle("app:releaseForceLock", () => {
+  forcedUpdateActive = false;
+  const win = windows.about;
+  if (win && !win.isDestroyed()) {
+    win.setClosable(true);
+    win.hide();
+  }
+  showDashboard();
+});
+
+// Close button on the forced-update window itself. A user who downloads
+// a mandatory update and picks "Install Later" would otherwise have zero
+// way to exit (Home is hidden, native close is blocked). This gives them
+// a real way out — quitting the whole app — without ever falling through
+// to showDashboard(), which would bypass the mandatory update entirely.
+// Relaunching re-runs checkMandatoryUpdate() and re-locks them here until
+// they actually install.
+ipcMain.handle("app:quitApp", () => {
+  forcedUpdateActive = false;
+  quittingForUpdate = true;
+
+  // setClosable(false) was set when this window opened in forced mode.
+  // It blocks close at the OS level — not just the visible ✕ button, but
+  // any programmatic close too, including the one app.quit() below tries
+  // to trigger on this window. Without re-enabling it here, quit silently
+  // does nothing, same bug releaseForceLock already had to handle.
+  const win = windows.about;
+  if (win && !win.isDestroyed()) {
+    win.setClosable(true);
+  }
+
+  app.quit();
 });
 
 // ---------------------------------------------------------------------------
@@ -538,6 +624,12 @@ ipcMain.handle("app:installUpdate", async () => {
     return false;
   }
 
+  // Lift the lock now — app.quit() below closes every window, and the
+  // forced window's own close-guard (still keyed on forcedUpdateActive)
+  // would otherwise block that shutdown.
+  forcedUpdateActive = false;
+  quittingForUpdate = true;
+
   // Stop the backend server before replacing the installation
   stopServer();
 
@@ -625,12 +717,27 @@ ipcMain.handle("dialog:saveExcelTemplate", async (_event, mode) => {
 app.whenReady().then(() => {
   loadTheme();
   startServer();
-  waitForServer(() => {
-    createDashboardWindow();
+  waitForServer(async () => {
+    const mandatoryUpdate = await checkMandatoryUpdate();
+    if (mandatoryUpdate) {
+      // A required update is pending — show only the locked-down
+      // About/Update window and skip the dashboard entirely. Nothing else
+      // in the app is reachable from here (no Home button, no closing)
+      // until the update is installed.
+      createAboutWindow(true);
+    } else {
+      createDashboardWindow();
+    }
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createDashboardWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      if (forcedUpdateActive) {
+        createAboutWindow(true);
+      } else {
+        createDashboardWindow();
+      }
+    }
   });
 });
 

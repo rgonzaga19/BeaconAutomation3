@@ -76,6 +76,30 @@
     background: var(--accent-soft);
     color: var(--text-pri);
   }
+
+  /* ---------- Forced (mandatory) update mode ---------- */
+  .forced-banner {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 24px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--error);
+    border-left: 4px solid var(--error);
+    color: var(--error);
+    font-family: var(--font-ui);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+  }
+  /* Home only makes sense when there's a dashboard to go back to — in
+     forced mode there isn't, so it's hidden. Close/titlebar-close stay
+     visible: they're the user's only way to exit the app if they pick
+     "Install Later" — about.js relabels them and, in forced mode, wires
+     them to quit the app entirely rather than closing just this window. */
+  body.forced-mode #btnHome {
+    display: none;
+  }
 </style>
 
 </head>
@@ -101,6 +125,10 @@
             <div class="subtitle">Desktop automation for PhilHealth Beacon claims &middot; <span id="version">Version ...</span></div>
         </div>
         <button class="btn-home" id="btnHome" title="Back to Home">🏠 Home</button>
+    </div>
+
+    <div class="forced-banner" id="forcedBanner">
+        ⚠ A required update is available. Please install it to continue using Beabots.
     </div>
 
     <!-- ================= Content ================= -->
