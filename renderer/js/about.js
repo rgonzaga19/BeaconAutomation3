@@ -118,52 +118,96 @@ async function loadAbout() {
         updateStatusEl.textContent = "▲ Update Available";
         updateStatusEl.className = "update-status update";
 
-        btnDownload.disabled = false;
-        btnDownload.textContent = "Download Update";
+        if (update.alreadyDownloaded) {
 
-        btnDownload.onclick = async () => {
+            // Already fully downloaded in a previous session (e.g. the
+            // user picked "Install Later" and relaunched) — main.js found
+            // and verified it in the temp folder. No need to fetch it
+            // again; just let them confirm installing the copy on disk.
+            updateStatusEl.textContent = "✔ Update downloaded — ready to install";
+            updateStatusEl.className = "update-status success";
 
-            btnDownload.disabled = true;
-            btnDownload.textContent = "Downloading...";
+            btnDownload.disabled = false;
+            btnDownload.textContent = "Install Update";
 
-            downloadSection.style.display = "block";
-            downloadProgressBar.style.width = "0%";
-            downloadPercent.textContent = "0%";
-            downloadText.textContent = "Downloading update...";
+            btnDownload.onclick = async () => {
 
-            // Bring the detailed progress panel on screen in case it's
-            // currently scrolled out of view — a courtesy on top of the
-            // always-visible percentage now shown on this button.
-            downloadSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                btnDownload.disabled = true;
+                btnDownload.textContent = "Installing...";
 
-            try {
+                try {
 
-                const result = await window.beabots.downloadUpdate(update.download);
+                    const installNow = await window.beabots.installUpdate();
 
-                updateStatusEl.textContent = "✔ Update downloaded";
-                updateStatusEl.className = "update-status success";
+                    if (!installNow) {
+                        btnDownload.disabled = false;
+                        btnDownload.textContent = "Install Update";
+                        return;
+                    }
 
-                btnDownload.textContent = "Downloaded";
+                    console.log("User chose Install");
 
-                const installNow = await window.beabots.installUpdate();
+                } catch (err) {
 
-                if (!installNow) {
-                    btnDownload.textContent = "Install Later";
-                    return;
+                    alert(err.message);
+
+                    btnDownload.disabled = false;
+                    btnDownload.textContent = "Install Update";
+
                 }
 
-                console.log("User chose Install");
+            };
 
-            } catch (err) {
+        } else {
 
-                alert(err.message);
+            btnDownload.disabled = false;
+            btnDownload.textContent = "Download Update";
 
-                btnDownload.disabled = false;
-                btnDownload.textContent = "Download Update";
+            btnDownload.onclick = async () => {
 
-            }
+                btnDownload.disabled = true;
+                btnDownload.textContent = "Downloading...";
 
-        };
+                downloadSection.style.display = "block";
+                downloadProgressBar.style.width = "0%";
+                downloadPercent.textContent = "0%";
+                downloadText.textContent = "Downloading update...";
+
+                // Bring the detailed progress panel on screen in case it's
+                // currently scrolled out of view — a courtesy on top of the
+                // always-visible percentage now shown on this button.
+                downloadSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+                try {
+
+                    const result = await window.beabots.downloadUpdate(update.download);
+
+                    updateStatusEl.textContent = "✔ Update downloaded";
+                    updateStatusEl.className = "update-status success";
+
+                    btnDownload.textContent = "Downloaded";
+
+                    const installNow = await window.beabots.installUpdate();
+
+                    if (!installNow) {
+                        btnDownload.textContent = "Install Later";
+                        return;
+                    }
+
+                    console.log("User chose Install");
+
+                } catch (err) {
+
+                    alert(err.message);
+
+                    btnDownload.disabled = false;
+                    btnDownload.textContent = "Download Update";
+
+                }
+
+            };
+
+        }
 
     }
 

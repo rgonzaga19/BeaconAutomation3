@@ -476,6 +476,68 @@ ipcMain.handle("app:getSettings", async () => {
 
 });
 
+// ---------------------------------------------------------------------------
+// Update installer temp storage
+//
+// Every downloaded installer lives in one fixed folder so we can always
+// find — and clean up — whatever's sitting there. This fixes two things:
+//   1. "Install Later" + relaunch used to forget the download ever
+//      happened and made the user fetch it all over again.
+//   2. Every mandatory update left its installer behind forever, so this
+//      folder only ever grew.
+// ---------------------------------------------------------------------------
+const UPDATE_TEMP_DIR = path.join(os.tmpdir(), "Beabots");
+
+function installerPathFor(downloadUrl) {
+  const fileName = path.basename(new URL(downloadUrl).pathname);
+  return path.join(UPDATE_TEMP_DIR, fileName);
+}
+
+// Deletes everything in the temp folder except the one file we currently
+// care about, so installers from old updates don't pile up release after
+// release. Safe to call even if nothing (or the folder itself) exists yet.
+function cleanupOldInstallers(keepFilePath) {
+  if (!fs.existsSync(UPDATE_TEMP_DIR)) return;
+  for (const name of fs.readdirSync(UPDATE_TEMP_DIR)) {
+    const full = path.join(UPDATE_TEMP_DIR, name);
+    if (full !== keepFilePath) {
+      fs.rm(full, { force: true }, () => {});
+    }
+  }
+}
+
+// Checks whether a complete installer for this exact update is already
+// sitting on disk from a previous session. Verifies completeness against
+// the remote Content-Length rather than trusting a possibly partial or
+// corrupt leftover — e.g. from a download that never finished before the
+// app was closed. Deletes and returns null on anything that doesn't check
+// out, so the caller always falls back to a clean download.
+async function findExistingInstaller(filePath, downloadUrl) {
+  if (!fs.existsSync(filePath)) return null;
+
+  const actualSize = fs.statSync(filePath).size;
+  if (actualSize === 0) {
+    fs.unlinkSync(filePath);
+    return null;
+  }
+
+  try {
+    const head = await fetch(downloadUrl, { method: "HEAD" });
+    const expectedSize = Number(head.headers.get("content-length") || 0);
+    if (expectedSize && actualSize !== expectedSize) {
+      fs.unlinkSync(filePath);
+      return null;
+    }
+  } catch (err) {
+    // Can't verify size right now (offline, server hiccup, etc.) — the
+    // file is non-empty, so treat it as good rather than forcing a
+    // re-download the user may not be able to complete anyway.
+    console.error("[update] HEAD check failed, trusting existing file:", err);
+  }
+
+  return filePath;
+}
+
 ipcMain.handle("app:checkForUpdates", async () => {
 
   const response = await fetch(
@@ -486,7 +548,19 @@ ipcMain.handle("app:checkForUpdates", async () => {
     throw new Error("Unable to contact update server.");
   }
 
-  return await response.json();
+  const data = await response.json();
+
+  // Clean up anything left over from older updates, then see if today's
+  // target is itself already downloaded from a previous session.
+  const targetPath = installerPathFor(data.download);
+  cleanupOldInstallers(targetPath);
+
+  const existing = await findExistingInstaller(targetPath, data.download);
+  if (existing) {
+    downloadedInstaller = existing;
+  }
+
+  return { ...data, alreadyDownloaded: !!existing };
 
 });
 
@@ -496,11 +570,9 @@ ipcMain.handle("app:openExternal", async (_event, url) => {
 
 ipcMain.handle("app:downloadUpdate", async (_event, downloadUrl) => {
 
-  const tempDir = path.join(os.tmpdir(), "Beabots");
-  fs.mkdirSync(tempDir, { recursive: true });
+  fs.mkdirSync(UPDATE_TEMP_DIR, { recursive: true });
 
-  const fileName = path.basename(new URL(downloadUrl).pathname);
-  const filePath = path.join(tempDir, fileName);
+  const filePath = installerPathFor(downloadUrl);
 
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);
@@ -576,6 +648,7 @@ ipcMain.handle("app:downloadUpdate", async (_event, downloadUrl) => {
             });
 
             downloadedInstaller = filePath;
+            cleanupOldInstallers(filePath);
 
             resolve({
               success: true,
