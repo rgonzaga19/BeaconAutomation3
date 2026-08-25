@@ -238,6 +238,12 @@ class CF2Automation:
             critical=False,
         )
 
+        self._step(
+            "Checking Patient Type dropdown...",
+            lambda: self._check_and_select_patient_type(page),
+            critical=False,
+        )
+
         self._fill_referral_and_accommodation(page)
         self._fill_disposition_and_diagnosis(page)
         self._add_discharge_diagnosis(page)
@@ -456,6 +462,54 @@ class CF2Automation:
             page.wait_for_load_state("networkidle")
         else:
             print("No validation required - skipping.")
+
+    def _check_and_select_patient_type(self, page):
+        """
+        Checks if the Patient Type dropdown field is enabled.
+        It is usually disabled, but if enabled, selects 'O - Outpatient'.
+        If disabled or not present, ignores and proceeds.
+        """
+        dropdown = page.locator('div[id^="patientTypeCode-"]').first
+        if dropdown.count() == 0:
+            print("Patient Type field not found - skipping.")
+            return
+
+        is_disabled = dropdown.evaluate(
+            """(el) => {
+                if (el.hasAttribute('disabled')) return true;
+                if (el.getAttribute('aria-disabled') === 'true') return true;
+                if (el.disabled === true) return true;
+                const notAllowed = el.querySelector('div[style*="cursor: not-allowed"]');
+                if (notAllowed) return true;
+                const btn = el.querySelector('button');
+                if (btn && (btn.disabled || btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true')) return true;
+                return false;
+            }"""
+        )
+
+        if is_disabled:
+            print("Patient Type field is disabled - skipping.")
+            return
+
+        print("Patient Type field is enabled. Selecting 'O - Outpatient'...")
+        btn = dropdown.locator("button")
+        if btn.count() > 0:
+            btn.first.click(force=True)
+        else:
+            dropdown.click(force=True)
+
+        page.wait_for_timeout(500)
+
+        menu_option = page.locator('div[style*="z-index: 2100"]').get_by_text(
+            "O - Outpatient", exact=True
+        )
+        if menu_option.count() > 0:
+            menu_option.first.click()
+        else:
+            page.get_by_text("O - Outpatient", exact=True).first.click()
+
+        page.wait_for_timeout(500)
+        print("Selected Patient Type: O - Outpatient.")
 
     def _fill_referral_and_accommodation(self, page):
         self._step(

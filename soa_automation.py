@@ -933,6 +933,97 @@ class SOAAutomation:
 
                     logger.success("SOA uploaded successfully.")
 
+                # ── Triple-save after upload (guard against Beacon instability) ──
+                # Beacon can accept the file upload request and return networkidle
+                # but silently not persist the charges to the claim record until a
+                # Save is explicitly triggered. Without this save, the SOA modal
+                # that opens next will be empty even though the upload appeared
+                # successful. Three progressively-broader save clicks mirror the
+                # same strategy used in cf2_automation._save_cf2(). Every click
+                # is best-effort — a missing or flaky save button here must not
+                # abort an otherwise-successful transmittal.
+
+                logger.info(
+                    "Saving after SOA upload (triple-save, best-effort)..."
+                )
+
+                # Click 1 — primary submit button (last button[type=submit] on page)
+                try:
+                    save_btn_1 = self.page.locator(
+                        "button[type='submit']"
+                    ).last
+                    if save_btn_1.count() > 0:
+                        save_btn_1.scroll_into_view_if_needed()
+                        save_btn_1.click(force=True)
+                        try:
+                            self.page.wait_for_load_state(
+                                "networkidle",
+                                timeout=15000
+                            )
+                        except Exception:
+                            pass
+                        self.page.wait_for_timeout(1000)
+                        logger.info("Save click 1 (submit button) done.")
+                    else:
+                        logger.warning(
+                            "Save click 1: no button[type=submit] found — skipping."
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Save click 1 (submit button) failed, continuing: {e}"
+                    )
+
+                # Click 2 — explicit SAVE label (catches cases where button
+                # order shifts or the submit attribute is missing)
+                try:
+                    save_btn_2 = self.page.get_by_role(
+                        "button", name="SAVE", exact=True
+                    )
+                    if save_btn_2.count() > 0:
+                        save_btn_2.last.scroll_into_view_if_needed()
+                        save_btn_2.last.click(force=True)
+                        try:
+                            self.page.wait_for_load_state(
+                                "networkidle",
+                                timeout=15000
+                            )
+                        except Exception:
+                            pass
+                        self.page.wait_for_timeout(1000)
+                        logger.info("Save click 2 (SAVE label) done.")
+                    else:
+                        logger.warning(
+                            "Save click 2: no button named 'SAVE' found — skipping."
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Save click 2 (SAVE label) failed, continuing: {e}"
+                    )
+
+                # Click 3 — JS fallback: bypasses Playwright actionability checks
+                # entirely in case the button is blocked by an overlay/animation.
+                try:
+                    self.page.evaluate(
+                        """() => {
+                            const btns = [...document.querySelectorAll('button')];
+                            const save = btns.find(
+                                b => b.textContent.trim().toUpperCase() === 'SAVE'
+                            );
+                            if (save) save.click();
+                        }"""
+                    )
+                    self.page.wait_for_timeout(1500)
+                    logger.info("Save click 3 (JS evaluate fallback) done.")
+                except Exception as e:
+                    logger.warning(
+                        f"Save click 3 (JS fallback) failed, continuing: {e}"
+                    )
+
+                logger.success(
+                    "Triple-save after upload complete — proceeding to "
+                    "Statement of Account."
+                )
+
             # ── Open Statement of Account ───────────────────────────────
             logger.info("Opening Statement of Account...")
 

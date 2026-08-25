@@ -1182,19 +1182,97 @@ def _process_transmittal(page, idx, transmittal_no, transmittals, auto_encode_cf
     page.get_by_text("DRUGS / MEDICINES", exact=True).click()
     _safe_networkidle(page)
 
-    rows = page.locator("tbody tr")
+    # Scope every lookup below to the Drugs and Medicines modal itself.
+    #
+    # The previous approach used `page.locator("tbody tr")` and a
+    # `document.querySelectorAll('tbody tr')` readiness check — both
+    # query the ENTIRE page, not just this modal. Beacon keeps the
+    # underlying page (transmittals/claims table, etc.) mounted in the
+    # DOM behind the modal overlay instead of unmounting it, so when
+    # the modal's own medicine table is genuinely empty (no SOA
+    # uploaded — see the attached screenshot: header row with nothing
+    # underneath), that unscoped selector still finds unrelated <tr>
+    # rows sitting behind the overlay. Net effect:
+    #   (a) the readiness check sees "rows.length > 0" immediately
+    #       (from the background page), so it never even notices the
+    #       modal is empty;
+    #   (b) rows.count() reads > 0 for the same reason, so the "no
+    #       medicine found" skip below never fires;
+    #   (c) the medicine loop then tries to click/read a "row" that is
+    #       really a covered, off-screen element from the page behind
+    #       the overlay, which stalls until Playwright's own action
+    #       timeout — surfacing as a generic page/locator timeout
+    #       instead of the intended clean skip.
+    #
+    # Fix: anchor on the "OUTSIDE MEDICINE" button, which is unique to
+    # this modal and is always rendered whether the table has rows or
+    # not (confirmed in the empty-table screenshot), then walk up to
+    # its ancestor div that contains the table. Same pattern already
+    # used for the Course in the Ward modal
+    # (_course_in_ward_table_has_entries) for the identical reason.
+    outside_medicine_btn = page.locator(
+        "button:has-text('OUTSIDE MEDICINE')"
+    ).first
+
+    outside_medicine_btn.wait_for(state="visible", timeout=10000)
+
+    medicines_container = outside_medicine_btn.locator(
+        "xpath=ancestor::div[.//table][1]"
+    )
+
+    # The table renders asynchronously — _safe_networkidle() can return
+    # while <tbody> is still empty even when rows genuinely exist. Poll
+    # the MODAL (not the whole page) until rows appear inside it OR the
+    # modal itself explicitly indicates no data, whichever comes first,
+    # before reading the final count.
+    logger.info("Waiting for Drugs and Medicines table to settle...")
+
+    settle_deadline = time.monotonic() + 8
+    settled = False
+
+    while time.monotonic() < settle_deadline:
+        if medicines_container.locator("tbody tr").count() > 0:
+            settled = True
+            break
+
+        container_text = medicines_container.inner_text().lower()
+        if any(
+            phrase in container_text
+            for phrase in (
+                "no data", "no record", "no results", "no medicine", "empty"
+            )
+        ):
+            settled = True
+            break
+
+        page.wait_for_timeout(250)
+
+    if not settled:
+        # Table didn't signal either way — fall through to the count
+        # check below; a truly empty table will still be caught there.
+        logger.warning(
+            "Drugs and Medicines table did not settle within 8 s — "
+            "checking row count anyway."
+        )
+
+    # Small settle buffer so a late-paint row isn't missed.
+    page.wait_for_timeout(500)
+
+    rows = medicines_container.locator("tbody tr")
 
     if rows.count() == 0:
-        logger.error("No medicines found. Skipping patient.")
+        logger.error(
+            "No medicine found, no uploaded SOA, skipping patient."
+        )
         report.skipped(
             transmittal=transmittal_no,
-            remarks="No medicines found"
+            remarks="No medicine found, no uploaded SOA, skipping patient"
         )
 
         open_transmittals(page)
         return
 
-    rows = page.locator("tbody tr")
+    rows = medicines_container.locator("tbody tr")
 
     for i in range(rows.count()):
         logger.info(f"\nProcessing medicine {i + 1}/{rows.count()}")
