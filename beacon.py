@@ -1297,7 +1297,9 @@ def _process_transmittal(page, idx, transmittal_no, transmittals, auto_encode_cf
         for line in lines:
             if (
                 "REGULAR HEPARIN" in line or
+                "HEPARIN" in line or
                 "PNSS" in line or
+                "SODIUM CHLORIDE" in line or
                 "HEMODIALYSIS" in line or
                 "EPOETIN ALFA" in line or
                 "EPOETIN BETA" in line
@@ -1315,9 +1317,15 @@ def _process_transmittal(page, idx, transmittal_no, transmittals, auto_encode_cf
         )
 
         # Determine medicine search term
-        if "REGULAR HEPARIN" in medicine_name:
+        #
+        # Beacon doesn't always label the same medicine consistently —
+        # some rows show "REGULAR HEPARIN" / "PNSS", others show the
+        # bare "HEPARIN" / "SODIUM CHLORIDE" for the exact same drug
+        # (confirmed by inspecting the row's title attribute). Both
+        # formats need to resolve to the same search term below.
+        if "REGULAR HEPARIN" in medicine_name or "HEPARIN" in medicine_name:
             search_term = "HEPARIN"
-        elif "PNSS" in medicine_name:
+        elif "PNSS" in medicine_name or "SODIUM CHLORIDE" in medicine_name:
             search_term = "SODIUM"
         elif "HEMODIALYSIS ACID" in medicine_name:
             search_term = "HEMOD"
@@ -1432,14 +1440,14 @@ def _process_transmittal(page, idx, transmittal_no, transmittals, auto_encode_cf
         # in this block now goes through the same recovery path as a
         # duration-based timeout.
         try:
-            if "REGULAR HEPARIN" in medicine_name:
+            if "REGULAR HEPARIN" in medicine_name or "HEPARIN" in medicine_name:
                 popup.locator(
                     "label",
                     has_text="HEPARIN ( As SODIUM) 5000 IU/Ml SOLUTION 5 Ml VIAL"
                 ).locator("xpath=../..").click(force=True)
                 logger.info("Selected HEPARIN 5000 IU/ML 5 ML VIAL")
 
-            elif "PNSS" in medicine_name:
+            elif "PNSS" in medicine_name or "SODIUM CHLORIDE" in medicine_name:
                 popup.get_by_text(
                     "0.9% SODIUM CHLORIDE SOLUTION 1 L BOTTLE",
                     exact=True
