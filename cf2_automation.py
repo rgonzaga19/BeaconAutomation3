@@ -718,11 +718,49 @@ class CF2Automation:
         page.wait_for_timeout(500)
 
         def _fill_rvs():
+            # Beacon's RVS Code autocomplete is unreliable — sometimes
+            # typing "90935" produces the suggestion immediately (see
+            # screenshot 2), sometimes nothing renders below the input at
+            # all even after the same delay (see screenshot 1), and the
+            # field is just left holding "90935" as plain text with no
+            # dropdown to click. The original single-shot version had no
+            # way to tell those two cases apart: it always clicked
+            # `.last`, which either clicked the real suggestion or clicked
+            # nothing found (Playwright would then time out waiting on an
+            # empty locator) — no retry, no distinct error.
+            #
+            # Fix: explicitly wait for the suggestion to become visible;
+            # if it doesn't show up in time, clear the field and retype
+            # from scratch (a fresh keystroke sequence is what actually
+            # gets Beacon's autocomplete to fire again — clicking away
+            # and back doesn't reliably re-trigger it), up to a few
+            # attempts, before giving up with a clear error.
             rvs_input = page.get_by_label("RVS Code")
-            rvs_input.click()
-            rvs_input.type("90935", delay=100)
-            page.wait_for_timeout(1000)
-            page.get_by_text("90935", exact=True).last.click()
+            suggestion = page.get_by_text("90935", exact=True).last
+
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                rvs_input.click()
+                rvs_input.fill("")  # clear any stale/partial text first
+                rvs_input.type("90935", delay=100)
+
+                try:
+                    suggestion.wait_for(state="visible", timeout=3000)
+                    suggestion.click()
+                    return
+                except PlaywrightTimeoutError:
+                    print(
+                        "WARNING: RVS Code suggestion '90935' did not "
+                        f"appear (attempt {attempt}/{max_attempts}) — "
+                        "retrying..."
+                    )
+                    page.wait_for_timeout(500)
+
+            raise RuntimeError(
+                "RVS Code suggestion '90935' never appeared after "
+                f"{max_attempts} attempts — Beacon's autocomplete may be "
+                "unresponsive."
+            )
 
         self._step("Selecting RVS Code 90935...", _fill_rvs, critical=True)
         page.wait_for_timeout(500)
