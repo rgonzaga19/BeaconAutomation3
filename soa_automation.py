@@ -1207,41 +1207,96 @@ class SOAAutomation:
                     f"Professional Discount = {pf_discount}"
                 )
 
+                actual_selector = "input#actualCharges0"
+                discount_selector = (
+                    "input#seniorCitizenDiscount0"
+                    if is_senior
+                    else "input#pwdDiscount0"
+                )
+
                 pf_actual_input = self.page.locator(
-                    "input#actualCharges0"
+                    actual_selector
                 ).nth(1)
 
-                if is_senior:
-                    pf_discount_input = self.page.locator(
-                        "input#seniorCitizenDiscount0"
-                    ).nth(1)
-                else:
-                    pf_discount_input = self.page.locator(
-                        "input#pwdDiscount0"
-                    ).nth(1)
+                pf_discount_input = self.page.locator(
+                    discount_selector
+                ).nth(1)
 
-                _type_into_number_field(
-                    self.page,
-                    pf_actual_input,
-                    pf_actual
+                # Guard: Beacon only renders a Professional Fees ROW
+                # (and therefore these input elements) at all when a
+                # doctor has been added to the claim. With no doctor,
+                # the Professional Fees table has zero data rows —
+                # not a disabled row, an ABSENT one (confirmed via
+                # screenshot: header row, then straight to "Grand
+                # Summaries 0.00", nothing in between).
+                #
+                # Both `actual_selector` and `discount_selector` are
+                # reused by Beacon across the Summary-of-Fees table
+                # AND the Professional-Fees table — normally there
+                # are 2 matches on the page and `.nth(1)` picks the
+                # professional-fees one. When no doctor is added, only
+                # the Summary-of-Fees match exists, so `.nth(1)`
+                # resolves to zero elements.
+                #
+                # Calling `.is_disabled()` on a locator with zero
+                # matches doesn't return False — it raises, since
+                # there's nothing to check the state of. That's why
+                # checking is_disabled() alone silently failed to
+                # catch this case: the field isn't disabled, it never
+                # exists in the first place.
+                #
+                # Before any check at all, this surfaced as:
+                # _type_into_number_field() retrying 3 times against a
+                # nonexistent element, falling back to locator.fill()
+                # (which requires an actionable element and has no
+                # force option), raising, bubbling up to the
+                # transmittal-level except block, getting marked
+                # "failed", and queuing a retry that could never
+                # succeed — retrying doesn't add a doctor.
+                #
+                # Fix: check count() for both selectors FIRST. Only
+                # fall back to is_disabled() when the elements
+                # genuinely exist (covers a doctor row being present
+                # but Beacon still disabling it for some other
+                # reason).
+                pf_row_missing = (
+                    self.page.locator(actual_selector).count() < 2
+                    or self.page.locator(discount_selector).count() < 2
                 )
 
-                _type_into_number_field(
-                    self.page,
-                    pf_discount_input,
-                    pf_discount
+                pf_disabled = (
+                    pf_row_missing
+                    or pf_actual_input.is_disabled()
+                    or pf_discount_input.is_disabled()
                 )
 
-                discount_targets.append(
-                    (
-                        pf_discount_input,
-                        f"{pf_discount:.2f}"
+                if pf_disabled:
+                    logger.error(
+                        "No professional fee to map, add a doctor."
                     )
-                )
+                else:
+                    _type_into_number_field(
+                        self.page,
+                        pf_actual_input,
+                        pf_actual
+                    )
 
-                logger.success(
-                    "Professional Fees populated."
-                )
+                    _type_into_number_field(
+                        self.page,
+                        pf_discount_input,
+                        pf_discount
+                    )
+
+                    discount_targets.append(
+                        (
+                            pf_discount_input,
+                            f"{pf_discount:.2f}"
+                        )
+                    )
+
+                    logger.success(
+                        "Professional Fees populated."
+                    )
 
             # ==========================================================
             # Re-verify discount fields before saving
