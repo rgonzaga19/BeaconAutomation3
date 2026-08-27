@@ -891,6 +891,41 @@ class CF2Automation:
             )
             return
 
+        # Guard: every session date must fall within the claim's own
+        # Admission Date / Discharge Date range. Read both straight
+        # from the page (rather than trusting the uploaded record
+        # alone), since that's the actual constraint Beacon enforces —
+        # catching a mismatch here, before typing anything, is much
+        # clearer than letting it surface later at save time.
+        admission_input = page.locator('input[id^="admissionDate-"]').first
+        discharge_input = page.locator('input[id^="dischargeDate-"]').first
+
+        admission_raw = admission_input.input_value().strip()
+        discharge_raw = discharge_input.input_value().strip()
+
+        try:
+            admission_date = datetime.strptime(admission_raw, "%m-%d-%Y").date()
+            discharge_date = datetime.strptime(discharge_raw, "%m-%d-%Y").date()
+        except ValueError as e:
+            raise RuntimeError(
+                f"Could not read Admission/Discharge date from the page "
+                f"(admission='{admission_raw}', discharge='{discharge_raw}'): {e}"
+            )
+
+        def _as_date(value):
+            return value.date() if hasattr(value, "date") else value
+
+        out_of_range = [
+            session_date for session_date in data.session_dates
+            if not (admission_date <= _as_date(session_date) <= discharge_date)
+        ]
+
+        if out_of_range:
+            raise RuntimeError(
+                "The session dates entered do not fall within the "
+                "admission and discharge date range."
+            )
+
         print(f"Filling {len(data.session_dates)} session dates...")
         for i, session_date in enumerate(data.session_dates):
             date_str = session_date.strftime("%m%d%Y")
