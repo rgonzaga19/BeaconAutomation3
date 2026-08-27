@@ -576,6 +576,23 @@ class CF2Automation:
         page.wait_for_timeout(500)
 
     def _add_discharge_diagnosis(self, page):
+        # Guard: check THIS section's own row count before clicking its
+        # NEW button — don't rely on any other section's state as a
+        # proxy. Scoped to the Discharge Diagnosis table specifically
+        # (anchor on its heading, walk up to the ancestor div containing
+        # the table), so it can't be confused by rows belonging to a
+        # different section.
+        diagnosis_container = page.locator(
+            "text=Discharge Diagnosis"
+        ).first.locator("xpath=ancestor::div[.//table][1]")
+
+        if diagnosis_container.locator("tbody tr").count() > 0:
+            print(
+                "Discharge Diagnosis already has a row - skipping to "
+                "avoid duplicating it."
+            )
+            return
+
         def _click_new():
             page.locator(
                 "text=Discharge Diagnosis"
@@ -710,6 +727,24 @@ class CF2Automation:
             raise RuntimeError("Could not open diagnosis kebab menu.")
 
     def _add_surgical_procedure(self, page, data):
+        # Guard: check THIS section's own state before clicking its NEW
+        # button — don't rely on Discharge Diagnosis (or any other
+        # section) as a proxy. Beacon only renders the "RVS CODE" label
+        # once a Surgical Procedure card actually exists (before a
+        # procedure is added this area is blank; after, it shows
+        # ICD10 CODE / NAME / RVS CODE / REPETITIVE — see screenshot).
+        # At this point in the flow the "Add New Surgical Procedure"
+        # modal isn't open yet, so "RVS CODE" being visible on the page
+        # can only mean an existing card.
+        existing_procedure = page.get_by_text("RVS CODE", exact=True).first
+
+        if existing_procedure.count() > 0 and existing_procedure.is_visible():
+            print(
+                "Surgical Procedure already exists - skipping to avoid "
+                "duplicating it."
+            )
+            return
+
         self._step(
             "Clicking NEW (Surgical Procedure)...",
             lambda: page.locator("#aTesting-newSurgicalProcedure").click(),
@@ -806,7 +841,56 @@ class CF2Automation:
         self._step("Saving Surgical Procedure...", _save, critical=True)
         page.wait_for_timeout(1000)
 
+    def _first_case_tag_present(self, page):
+        """
+        Returns True if the Surgical Procedure row is already tagged as
+        1st Case Rate.
+
+        Scoped to the RVS Code row's vertical position — same
+        geometry-based approach used to find the kebab button — since
+        a blind page-wide page.get_by_text("1ST CASE RATE") isn't
+        reliable: DOM inspection shows the badge's wrapping <div>
+        (label + a small svg "x" icon) reports the exact same innerText
+        as the <label> itself, so more than one element on the page can
+        carry this identical text, with no guarantee a blind search
+        lands on the actual visible badge over some other match.
+        """
+        sp_anchor = page.get_by_text("RVS CODE", exact=True).first
+
+        if sp_anchor.count() == 0:
+            return False
+
+        sp_box = sp_anchor.bounding_box()
+        if not sp_box:
+            return False
+
+        sp_y_center = sp_box["y"] + sp_box["height"] / 2
+
+        tag_labels = page.locator("label", has_text="1ST CASE RATE")
+
+        for i in range(tag_labels.count()):
+            lbl = tag_labels.nth(i)
+            if not lbl.is_visible():
+                continue
+            box = lbl.bounding_box()
+            if box and abs((box["y"] + box["height"] / 2) - sp_y_center) < 40:
+                return True
+
+        return False
+
     def _fill_session_dates(self, page, data):
+        # Guard: if the Surgical Procedure is already tagged as 1st
+        # Case Rate, this patient has already been fully processed
+        # through this part of CF2 before (e.g. a retry) — session
+        # dates would already be filled in too. Re-running this would
+        # retype over (or duplicate) dates that are already correct.
+        if self._first_case_tag_present(page):
+            print(
+                "Surgical Procedure is already tagged as 1st Case Rate "
+                "- skipping session date entry (already completed)."
+            )
+            return
+
         print(f"Filling {len(data.session_dates)} session dates...")
         for i, session_date in enumerate(data.session_dates):
             date_str = session_date.strftime("%m%d%Y")
@@ -827,6 +911,10 @@ class CF2Automation:
     def _tag_first_case(self, page):
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(500)
+
+        if self._first_case_tag_present(page):
+            print("Surgical Procedure is already tagged as 1st Case Rate - skipping.")
+            return
 
         sp_anchor = page.get_by_text("RVS CODE", exact=True).first
         sp_anchor.scroll_into_view_if_needed()
@@ -867,6 +955,22 @@ class CF2Automation:
         page.wait_for_timeout(1000)
 
     def _add_doctor(self, page, data):
+        # Guard: check THIS section's own row count before clicking its
+        # NEW button — same pattern as Discharge Diagnosis. Scoped to
+        # the Doctors table specifically (anchor on its heading, walk
+        # up to the ancestor div containing the table), so it can't be
+        # confused by rows belonging to a different section.
+        doctors_container = page.locator(
+            "text=Doctors"
+        ).first.locator("xpath=ancestor::div[.//table][1]")
+
+        if doctors_container.locator("tbody tr").count() > 0:
+            print(
+                "Doctors already has a row - skipping to avoid "
+                "duplicating it."
+            )
+            return
+
         self._step(
             "Clicking NEW (Doctors)...",
             lambda: page.locator("#aTesting-newDoctorsOrder").click(),
