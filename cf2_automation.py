@@ -1658,23 +1658,6 @@ class CF2Automation:
 
             def _navigate_and_select():
                 nonlocal picker_opened
-                # The picker always opens defaulting to TODAY's date (every
-                # screenshot confirms this, e.g. "Thu, Aug 6" when today is
-                # Aug 6). That's a far more reliable anchor than reading and
-                # parsing the on-screen month/year label — a previous
-                # version compared header.inner_text() against a formatted
-                # string and, on any mismatch (whitespace, format drift),
-                # would silently click one direction for up to 24 iterations
-                # and land wherever that happened to end (observed bug: it
-                # opened on Aug 2026 but ended up saving June 2026). Compute
-                # the required number of clicks directly instead — no text
-                # parsing, no equality check, no chance of drifting off.
-                today = datetime.now()
-                months_diff = (
-                    (target_date.year - today.year) * 12
-                    + (target_date.month - today.month)
-                )
-
                 # Arrow buttons are identified by their fixed SVG icon path
                 # (chevron-right = next month, chevron-left = previous
                 # month) since neither button carries a class or label.
@@ -1685,6 +1668,41 @@ class CF2Automation:
                     'button:has(path[d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"])'
                 )
 
+                # DO NOT assume the picker opens on "today". That's only
+                # true the FIRST time it's opened on a fresh page load.
+                # Confirmed via live testing + DOM inspection: once the
+                # calendar has been opened and closed once, Beacon's
+                # picker component retains whatever month it was left
+                # on — so on the 2nd/3rd run the code was still computing
+                # months_diff against "today" while the picker had
+                # actually opened on a completely different month,
+                # landing one month further off each run (compounding
+                # drift).
+                #
+                # Fix: read the month/year Beacon is CURRENTLY showing
+                # straight from the calendar header text (e.g. "July
+                # 2026") right after opening the picker, and compute
+                # months_diff against THAT instead of datetime.now().
+                # DOM inspection (right-click > Inspect on the header)
+                # confirms the header is a div styled
+                # style="height: inherit; padding-top: 12px;" containing
+                # exactly the "<Month> <Year>" text, sitting between the
+                # prev/next arrow buttons in the same flex row. Anchoring
+                # the lookup to "the padding-top:12px div that follows
+                # the prev-month button" scopes it to the picker's own
+                # header instead of matching unrelated elements with a
+                # similar inline style elsewhere on the page.
+                header_div = prev_month_btn.locator(
+                    "xpath=following::div[contains(@style,'padding-top: 12px')][1]"
+                )
+                header_text = header_div.inner_text().strip()
+                displayed_month = datetime.strptime(header_text, "%B %Y")
+
+                months_diff = (
+                    (target_date.year - displayed_month.year) * 12
+                    + (target_date.month - displayed_month.month)
+                )
+
                 btn_to_click = next_month_btn if months_diff > 0 else prev_month_btn
 
                 for _ in range(abs(months_diff)):
@@ -1692,7 +1710,7 @@ class CF2Automation:
                     page.wait_for_timeout(250)
 
                 print(
-                    f"  Date Signed picker: today={today.strftime('%m/%d/%Y')}, "
+                    f"  Date Signed picker: displayed_month={header_text}, "
                     f"target={target_date.strftime('%m/%d/%Y')}, "
                     f"months_diff={months_diff}"
                 )
