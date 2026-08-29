@@ -1,6 +1,9 @@
 import os
 import sys
 import json
+import time
+
+import requests
 
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -35,10 +38,132 @@ browser = None
 context = None
 page = None
 
+# In-memory cache of the most recent API login result (access_token,
+# refresh_token, expiry, etc.) - kept separate from the Playwright
+# storage_state so hybrid API modules can get a bearer token without
+# needing a live browser/page at all. Populated by _ensure_auth_token().
+_auth_token = None
+
 
 def has_session():
 
     return page is not None
+
+
+def login_via_api(username, password):
+    """
+    Authenticate directly against Beacon's OAuth2 token endpoint
+    (POST /token, grant_type=password) instead of driving the login
+    form through the browser.
+
+    This is the exact same request Beacon's own frontend makes when you
+    click SIGN IN - confirmed via a captured HAR of a real login - so it
+    returns the same payload (access_token, refresh_token, expires_in,
+    token_type, etc.), and every subsequent Beacon API call authenticates
+    via "Authorization: Bearer <access_token>" (also confirmed via HAR).
+
+    Doing this as a direct call, independent of Playwright, means:
+      - a bad password or an unreachable server fails fast with a plain
+        requests exception, instead of only surfacing ~30s later as a
+        Playwright timeout waiting for a selector that will never appear;
+      - the resulting access_token is available in Python immediately,
+        independent of whether a browser/page exists at all, for any
+        future hybrid module that talks to Beacon's API directly instead
+        of through the UI.
+
+    This does NOT by itself log the visible Playwright browser in.
+    Beacon's SPA keeps its own client-side auth state in the browser's
+    localStorage under a scheme we haven't reverse-engineered, so
+    guessing at it and injecting a token risks the SPA silently
+    disagreeing with itself. The browser is still logged in the normal,
+    known-correct way via _perform_login() below, immediately after this
+    succeeds - this call and that one are independent and this one is
+    never a substitute for it.
+    """
+    url = _get_beacon_url().rstrip("/") + "/token"
+
+    response = requests.post(
+        url,
+        data={
+            "grant_type": "password",
+            "username": username,
+            "password": password,
+        },
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        timeout=15,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def _store_auth_token(token_data):
+    """Cache an API login result (from login_via_api) in memory, tagged
+    with when it was issued so _ensure_auth_token() can tell when it's
+    about to expire."""
+    global _auth_token
+
+    _auth_token = {
+        "access_token": token_data.get("access_token"),
+        "refresh_token": token_data.get("refresh_token"),
+        "token_type": token_data.get("token_type", "bearer"),
+        "expires_in": token_data.get("expires_in"),
+        "issued_at": time.time(),
+    }
+
+
+def _ensure_auth_token(username=None, password=None):
+    """
+    Return a currently-valid bearer token, fetching a new one via
+    login_via_api() only if we don't already have one cached in memory
+    (or it's within 60s of expiring). Reads credentials from Settings if
+    not passed in directly.
+
+    Raises whatever login_via_api() raises (e.g. requests.HTTPError on
+    bad credentials, requests.ConnectionError if Beacon is unreachable)
+    - callers decide whether that should be fatal or just logged, since
+    a failure here doesn't necessarily mean the browser-based session
+    can't still work.
+    """
+    global _auth_token
+
+    if _auth_token is not None:
+        issued_at = _auth_token.get("issued_at", 0)
+        expires_in = _auth_token.get("expires_in") or 0
+        if time.time() < issued_at + max(expires_in - 60, 0):
+            return _auth_token.get("access_token")
+
+    if username is None or password is None:
+        settings = load_settings()
+        username = settings["username"]
+        password = settings["password"]
+
+    token_data = login_via_api(username, password)
+    _store_auth_token(token_data)
+
+    return _auth_token.get("access_token")
+
+
+def get_auth_token():
+    """
+    Return the current bearer token for use in direct API calls, e.g.:
+
+        headers = {"Authorization": f"Bearer {get_auth_token()}"}
+
+    Intended for future hybrid modules that talk to Beacon's API
+    directly. Transparently fetches/refreshes via _ensure_auth_token()
+    as needed. Returns None (rather than raising) if a token genuinely
+    can't be obtained right now, so callers can fall back to UI
+    automation instead of crashing.
+    """
+    try:
+        return _ensure_auth_token()
+    except Exception as e:
+        logger.warning(f"get_auth_token(): could not obtain a token ({e}).")
+        return None
 
 
 def _perform_login(username, password):
@@ -75,9 +200,10 @@ def _perform_login(username, password):
 
 
 def save_session():
-    """Persist the current context's storage state to disk. Call this after
-    a successful login AND after a successful automation run, since Beacon
-    may rotate/refresh tokens during normal use."""
+    """Persist the current context's storage state to disk, alongside the
+    cached API auth token (if any). Call this after a successful login
+    AND after a successful automation run, since Beacon may
+    rotate/refresh tokens during normal use."""
     global context
 
     if context is None:
@@ -85,8 +211,13 @@ def save_session():
 
     storage_state = context.storage_state()
 
+    session_data = {
+        "storage_state": storage_state,
+        "auth_token": _auth_token,
+    }
+
     with open(SESSION_FILE, "w", encoding="utf-8") as f:
-        json.dump(storage_state, f, indent=2)
+        json.dump(session_data, f, indent=2)
 
 
 def disconnect():
@@ -124,12 +255,22 @@ def connect():
     global browser
     global context
     global page
+    global _auth_token
 
     if page is not None:
         try:
             # cheap liveness check — raises if the browser/page was already
             # closed (e.g. after a previous run finished)
             page.evaluate("1")
+
+            try:
+                _ensure_auth_token()
+            except Exception as e:
+                logger.warning(
+                    f"Could not refresh API auth token ({e}); "
+                    "continuing with the existing browser session."
+                )
+
             return page
         except Exception:
             disconnect()
@@ -138,6 +279,23 @@ def connect():
 
     username = settings["username"]
     password = settings["password"]
+
+    # Get/refresh the bearer token up front, before opening a browser at
+    # all. On correct credentials this is a fast sanity check that also
+    # populates the token for any hybrid API module that wants one this
+    # run. On bad credentials or an unreachable server, it fails here in
+    # under 15s with a clear requests exception instead of only surfacing
+    # ~30s later as a Playwright timeout — but it's non-fatal here: if it
+    # fails, we still fall through to the exact same browser-based flow
+    # this always used, so a temporary API hiccup can't break a session
+    # that would otherwise still work fine.
+    try:
+        _ensure_auth_token(username, password)
+    except Exception as e:
+        logger.warning(
+            f"Could not obtain API auth token ({e}); "
+            "continuing with browser-only session."
+        )
 
     playwright = sync_playwright().start()
 
@@ -150,7 +308,16 @@ def connect():
 
         with open(SESSION_FILE, "r") as f:
 
-            storage_state = json.load(f)
+            session_data = json.load(f)
+
+        # Backward compatible with the old session.json format, which was
+        # a bare Playwright storage_state dict with no wrapping.
+        if "storage_state" in session_data:
+            storage_state = session_data["storage_state"]
+            if _auth_token is None and session_data.get("auth_token"):
+                _auth_token = session_data["auth_token"]
+        else:
+            storage_state = session_data
 
         context = browser.new_context(
             storage_state=storage_state
