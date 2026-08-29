@@ -137,6 +137,20 @@ def extract_ids_from_url(page_url):
     }
 
 
+def get_cf1_summary(claim_id):
+    """
+    Get the CF1 summary for a PHIC claim.
+
+    Confirmed from Beacon Network traffic: the response includes
+    ``memberMobileNumber``, which is used by the Statement of Account
+    Signatories flow for the patient representative contact number.
+    """
+    return _get(
+        "/api/PHICCF1/GetPHICCF1Summary",
+        params={"id": claim_id},
+    )
+
+
 _client_id_cache = None
 
 

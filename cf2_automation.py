@@ -1524,6 +1524,29 @@ class CF2Automation:
     def _fill_statement_of_account(self, page, data):
         original_page = page  # keep a handle on the original tab so we can return to it
 
+        # Get the member mobile directly from Beacon's CF1 API.
+        # This avoids scraping the visible Mobile field from the page.
+        member_mobile = None
+
+        def _get_member_mobile_from_api():
+            nonlocal member_mobile
+            ids = cf2_api.extract_ids_from_url(page.url)
+            cf1_summary = cf2_api.get_cf1_summary(ids["claim_id"])
+            member_mobile = (cf1_summary or {}).get("memberMobileNumber")
+            if not member_mobile:
+                raise cf2_api.Cf2ApiError(
+                    f"GetPHICCF1Summary returned no memberMobileNumber "
+                    f"for claimId={ids['claim_id']}."
+                )
+            member_mobile = str(member_mobile).strip()
+            print(f"Member mobile from CF1 API: {member_mobile}")
+
+        self._step(
+            "Getting member mobile from CF1 API...",
+            _get_member_mobile_from_api,
+            critical=True,
+        )
+
         def _open():
             page.locator('#cf2Save').get_by_role("button", name="Statement of Account").click()
             page.wait_for_load_state("networkidle")
@@ -1553,6 +1576,7 @@ class CF2Automation:
         contact_input = page.locator('input[name="adminContactNo"]')
         admin_date_input = page.locator('input[id^="adminDateSigned-MM-DD-YYYY"]')
         patient_rep_input = page.locator('input[name="patientRepresentative"]')
+        representative_contact_input = page.locator('input[name="representativeContactNo"]')
         conforme_date_input = page.locator('input[id^="representativeDateSigned-MM-DD-YYYY"]')
 
         def _fill_prepared_by():
@@ -1597,6 +1621,13 @@ class CF2Automation:
             patient_rep_input.press("Backspace")
             patient_rep_input.fill(data.patient_name)
 
+        def _fill_representative_contact():
+            representative_contact_input.click()
+            representative_contact_input.press("Control+A")
+            representative_contact_input.press("Backspace")
+            representative_contact_input.fill(member_mobile)
+            representative_contact_input.press("Tab")
+
         def _fill_conforme_date():
             conforme_date_input.click()
             conforme_date_input.press("Control+A")
@@ -1609,6 +1640,9 @@ class CF2Automation:
             page.wait_for_timeout(300)
 
             _fill_patient_representative()
+            page.wait_for_timeout(300)
+
+            _fill_representative_contact()
             page.wait_for_timeout(300)
 
             _fill_conforme_date()
@@ -1696,6 +1730,10 @@ class CF2Automation:
             _verify_text_field(
                 patient_rep_input, data.patient_name,
                 "Patient Representative", _fill_patient_representative,
+            )
+            _verify_text_field(
+                representative_contact_input, member_mobile,
+                "Representative Contact No.", _fill_representative_contact,
             )
             _verify_date_field(
                 conforme_date_input, date_str,
