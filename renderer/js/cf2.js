@@ -97,9 +97,9 @@ modeExistingDraftBtn.addEventListener("click", () => setMode("existing_draft"));
 // ---------------------------------------------------------------------------
 const logBox = document.getElementById("cf2LogBox");
 
-function log(text) {
+function log(text, level = "INFO") {
   const line = document.createElement("div");
-  line.className = "log-line INFO";
+  line.className = `log-line ${level}`;
   line.textContent = text;
   logBox.appendChild(line);
 }
@@ -111,6 +111,32 @@ function clearLog() {
 function scrollLogToEnd() {
   logBox.scrollTop = logBox.scrollHeight;
 }
+
+// ---------------------------------------------------------------------------
+// Raw server/automation stdout+stderr (see preload.js's onServerLog /
+// main.js's makeLineForwarder). This is separate from — and a superset
+// of — the socket.io "log" events further below: socket.io only carries
+// whatever server.py deliberately emits, while this carries every raw
+// print() / traceback from the Python process, including the WARNING
+// lines cf2_automation.py prints when an API-first step falls back to
+// UI automation (previously visible only in Electron's own,
+// invisible-once-packaged main-process console).
+// ---------------------------------------------------------------------------
+window.beabots?.onServerLog?.(({ level, line }) => {
+  log(line, level === "error" ? "ERROR" : "INFO");
+  scrollLogToEnd();
+});
+
+// "Open Log File" link — reveals the persisted log file directly (see
+// main.js's LOG_FILE), so a session's full raw output is available even
+// after this window's own log box has been cleared by a mode switch or
+// a new upload.
+document.getElementById("openLogFileLink")?.addEventListener("click", async () => {
+  const result = await window.beabots?.openLogFile?.();
+  if (result && result.opened === false) {
+    showModal("Error", `Unable to open log file.\n\n${result.error}`);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Upload Excel File (same log format as analyze_workbook())

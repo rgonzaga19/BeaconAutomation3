@@ -103,7 +103,10 @@ def login_via_api(username, password):
 def _store_auth_token(token_data):
     """Cache an API login result (from login_via_api) in memory, tagged
     with when it was issued so _ensure_auth_token() can tell when it's
-    about to expire."""
+    about to expire. Also keeps the userId (Id) Beacon returns
+    alongside the token - confirmed via HAR the /token response
+    includes it directly - so callers needing it (e.g. to look up
+    clientId via GetAllClientsByUserId) don't need a separate call."""
     global _auth_token
 
     _auth_token = {
@@ -111,8 +114,23 @@ def _store_auth_token(token_data):
         "refresh_token": token_data.get("refresh_token"),
         "token_type": token_data.get("token_type", "bearer"),
         "expires_in": token_data.get("expires_in"),
+        "user_id": token_data.get("Id"),
         "issued_at": time.time(),
     }
+
+
+def get_user_id():
+    """Return the current logged-in userId (Beacon's "Id" field from the
+    /token response), refreshing/logging in via _ensure_auth_token()
+    first if we don't have one cached. Returns None if unavailable."""
+    try:
+        _ensure_auth_token()
+    except Exception as e:
+        logger.warning(f"get_user_id(): could not obtain a token ({e}).")
+        return None
+
+    return _auth_token.get("user_id") if _auth_token else None
+
 
 
 def _ensure_auth_token(username=None, password=None):

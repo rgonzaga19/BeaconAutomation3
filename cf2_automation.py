@@ -5,6 +5,7 @@ from datetime import datetime
 import openpyxl
 from cf2_mapper import build_cf2_data
 import browser_session
+import cf2_api
 from beacon import open_transmittals
 from cf2_fees import get_fees
 from draft_automation import (
@@ -92,6 +93,23 @@ class CF2Automation:
         # Every processed patient gets one entry here:
         # {"transmittal": ..., "patient_name": ..., "status": "success"/"skipped"/"failed", "message": ...}
         self.results = []
+        # Set by the API-first path in _add_discharge_diagnosis /
+        # _add_surgical_procedure when they successfully handle
+        # everything (including "set as primary" / session dates /
+        # 1st case rate tag) via a direct API call — lets the
+        # corresponding later UI-fallback step(s) in fill_cf2() skip
+        # cleanly instead of wastefully retrying/timing out against
+        # work that's already done.
+        self._discharge_diagnosis_done_via_api = False
+        self._surgical_procedure_done_via_api = False
+        # Set inside _add_surgical_procedure's API path the moment
+        # NewPHICSurgicalProcedure itself succeeds — independent of
+        # _surgical_procedure_done_via_api, which only gets set once
+        # the WHOLE thing (procedure + session date + case rate tag)
+        # succeeds. If session-date/case-rate tagging fails after the
+        # procedure was already created, this flag stops the UI
+        # fallback below from re-creating a duplicate procedure.
+        self._surgical_procedure_created_via_api = False
 
     # ------------------------------------------------------------------
     # Public entry point — never lets a single patient crash the batch
@@ -192,6 +210,13 @@ class CF2Automation:
         wb.close()
         return str(value).strip() if value is not None else ""
 
+    def _get_ids(self, page):
+        """Wraps cf2_api.extract_ids_from_url(page.url) - shared by every
+        API-migrated step below. Raises cf2_api.Cf2ApiError if the URL
+        doesn't match the expected pattern, which callers treat the
+        same as any other API-path failure: fall back to UI automation."""
+        return cf2_api.extract_ids_from_url(page.url)
+
     # ------------------------------------------------------------------
     # Step runner — every UI action goes through this
     # ------------------------------------------------------------------
@@ -244,8 +269,22 @@ class CF2Automation:
             critical=False,
         )
 
-        self._fill_referral_and_accommodation(page)
-        self._fill_disposition_and_diagnosis(page)
+        # Discharge Diagnosis / Surgical Procedure / Doctor all go FIRST,
+        # before any of the plain-text CF2 fields below are typed. Two
+        # reasons:
+        #  1) Whether they go through the API-first path or fall back to
+        #     UI automation, Beacon's own in-page state (fetched once,
+        #     when the CF2 tab first opened) never learns about the new
+        #     rows on its own — only a page.reload() re-syncs it. Doing
+        #     that reload here, before anything else is typed, means it
+        #     can't wipe unsaved input the way it did when these ran
+        #     later in the sequence (the original bug this replaced).
+        #  2) Without the reload, Beacon's own client-side SAVE
+        #     validation still sees these sections as empty even once
+        #     the backend genuinely has the rows — which is what was
+        #     producing the "field can't be empty" error on SAVE despite
+        #     Discharge Diagnosis / Surgical Procedure showing data when
+        #     checked manually afterward.
         self._add_discharge_diagnosis(page)
 
         self._step(
@@ -255,6 +294,24 @@ class CF2Automation:
         )
 
         self._add_surgical_procedure(page, data)
+        self._add_doctor(page, data)
+
+        def _sync_and_open_cf2():
+            page.reload(wait_until="networkidle")
+            page.wait_for_timeout(1000)
+            cf2_tab = page.get_by_text("CF2", exact=True).first
+            if cf2_tab.count() > 0:
+                cf2_tab.click()
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(500)
+
+        self._step(
+            "Reloading and opening CF2 tab to sync Discharge Diagnosis / Surgical Procedure "
+            "/ Doctor before filling the rest of CF2...",
+            _sync_and_open_cf2,
+            critical=False,
+        )
+
         self._fill_session_dates(page, data)
 
         self._step(
@@ -263,7 +320,8 @@ class CF2Automation:
             critical=False,
         )
 
-        self._add_doctor(page, data)
+        self._fill_referral_and_accommodation(page)
+        self._fill_disposition_and_diagnosis(page)
         self._fill_benefits_and_fees(page, data)
         self._fill_access_patient_records_date(page, data)
         self._save_cf2(page)
@@ -576,6 +634,45 @@ class CF2Automation:
         page.wait_for_timeout(500)
 
     def _add_discharge_diagnosis(self, page):
+        # --- API-first path -------------------------------------------
+        # Confirmed via HAR: GetPHICDischargeDiagnoses (empty = guard
+        # check), SearchICD10, NewPHICDischargeDiagnosis,
+        # EditPrimaryPHICDischargeDiagnosis. Replaces the DOM row-count
+        # guard AND the kebab-menu "Set as Primary" click below in one
+        # shot. Any failure here (missing token, unexpected response
+        # shape, HTTP error) falls straight through to the exact same
+        # UI automation this always used - never left half-done.
+        try:
+            ids = self._get_ids(page)
+            existing = cf2_api.get_discharge_diagnoses(ids["claim_id"])
+            if existing:
+                print(
+                    "Discharge Diagnosis already has a row (via API) - "
+                    "skipping to avoid duplicating it."
+                )
+                return
+            cf2_api.add_discharge_diagnosis_n18_5(ids["claim_id"])
+            print("Discharge Diagnosis added and set as Primary (via API).")
+            # No reload here — fill_cf2() does a single reload after
+            # Discharge Diagnosis, Surgical Procedure, and Doctor have
+            # all been attempted, not after each one individually. That
+            # keeps this call's own success/failure independent of the
+            # others while still avoiding the earlier bug where a reload
+            # here wiped out already-typed CF2 fields (this now always
+            # runs before any of those fields are typed).
+            # _discharge_diagnosis_done_via_api is still checked BEFORE
+            # any DOM-based guard downstream (see _set_primary_diagnosis)
+            # so that skip logic works correctly even in the window
+            # before the group reload happens.
+            self._discharge_diagnosis_done_via_api = True
+            return
+        except Exception as e:
+            print(
+                f"WARNING: API path for Discharge Diagnosis failed "
+                f"({e}) - falling back to UI automation."
+            )
+
+        # --- UI fallback -------------------------------------------
         # Guard: check THIS section's own row count before clicking its
         # NEW button — don't rely on any other section's state as a
         # proxy. Scoped to the Discharge Diagnosis table specifically
@@ -614,6 +711,11 @@ class CF2Automation:
             page.locator("#aTesting-searchICDCodeSave").click(force=True)
 
         self._step("Adding Discharge Diagnosis (N18.5)...", _search_and_add, critical=True)
+
+        # UI fallback still needs "Set as Primary" done separately -
+        # the API path handled this atomically above, but the UI path
+        # never did (fill_cf2() calls _set_primary_diagnosis as its own
+        # step right after this one, unchanged).
         
 
     def _click_diagnosis_kebab(
@@ -720,6 +822,13 @@ class CF2Automation:
 
 
     def _set_primary_diagnosis(self, page):
+        if self._discharge_diagnosis_done_via_api:
+            print(
+                "Discharge Diagnosis was already set as Primary via "
+                "API - skipping."
+            )
+            return
+
         if self._click_diagnosis_kebab(page, confirm_menu_text="Set as Primary"):
             page.get_by_text("Set as Primary", exact=True).click(force=True)
             page.wait_for_timeout(500)
@@ -727,6 +836,72 @@ class CF2Automation:
             raise RuntimeError("Could not open diagnosis kebab menu.")
 
     def _add_surgical_procedure(self, page, data):
+        # --- API-first path -------------------------------------------
+        # Confirmed via HAR: GetPHICSurgicalProcedure (empty = guard
+        # check), NewPHICSurgicalProcedure, GetPHICAllCaseRates (empty
+        # = not tagged yet), SearchCaseRates (eclaimsapi),
+        # NewPHICAllCaseRate. Combines what are 3 separate UI steps
+        # today (_add_surgical_procedure, _fill_session_dates,
+        # _tag_first_case) into one call, matching what's actually true
+        # on Beacon's backend: a session's date is ONLY persisted as
+        # part of the NewPHICAllCaseRate call, so these were never
+        # really independent steps.
+        #
+        # Restricted to data.total_sessions == 1: the only case we have
+        # a captured, confirmed example for. We don't know whether
+        # NewPHICAllCaseRate accepts multiple sessions with different
+        # dates in one call or needs one call per session, so anything
+        # with more than 1 session falls straight through to the
+        # existing UI automation rather than guessing.
+        try:
+            ids = self._get_ids(page)
+            existing_procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
+
+            if existing_procedures:
+                print(
+                    "Surgical Procedure already exists (via API) - skipping creation."
+                )
+                self._surgical_procedure_created_via_api = True
+                return
+
+            icd10_matches = cf2_api.search_icd10("N18.5")
+            if not icd10_matches:
+                raise cf2_api.Cf2ApiError("SearchICD10('N18.5') returned no matches.")
+            procedure = cf2_api.new_surgical_procedure(
+                ids["claim_id"],
+                icd10_matches[0]["icD10Code"],
+                icd10_matches[0]["icD10Value"],
+                data.total_sessions,
+            )
+            self._surgical_procedure_created_via_api = True
+            print("Surgical Procedure created (via API).")
+            return
+        except Exception as e:
+            print(
+                f"WARNING: API path for Surgical Procedure creation failed ({e}) - "
+                f"falling back to UI automation."
+            )
+
+        # --- UI fallback -------------------------------------------
+        if self._surgical_procedure_created_via_api:
+            # NewPHICSurgicalProcedure already succeeded above before
+            # something after it failed (session-date search or 1st
+            # Case Rate tagging) — the procedure record genuinely
+            # exists on the backend. Reload so the DOM guard right
+            # below can actually see it (it was never rendered in this
+            # tab, since it was created via a raw API call, not a UI
+            # click) and correctly skip straight past procedure
+            # creation, instead of concluding "RVS CODE" isn't visible
+            # and clicking NEW — which would create a duplicate
+            # procedure record. The remaining session-date / 1st Case
+            # Rate steps then proceed normally via the UI.
+            print(
+                "Surgical Procedure was already created via API before "
+                "the failure above — reloading to avoid creating a "
+                "duplicate."
+            )
+            page.reload(wait_until="networkidle")
+
         # Guard: check THIS section's own state before clicking its NEW
         # button — don't rely on Discharge Diagnosis (or any other
         # section) as a proxy. Beacon only renders the "RVS CODE" label
@@ -879,17 +1054,14 @@ class CF2Automation:
         return False
 
     def _fill_session_dates(self, page, data):
-        # Guard: if the Surgical Procedure is already tagged as 1st
-        # Case Rate, this patient has already been fully processed
-        # through this part of CF2 before (e.g. a retry) — session
-        # dates would already be filled in too. Re-running this would
-        # retype over (or duplicate) dates that are already correct.
-        if self._first_case_tag_present(page):
-            print(
-                "Surgical Procedure is already tagged as 1st Case Rate "
-                "- skipping session date entry (already completed)."
-            )
-            return
+        # Guard: check if surgical procedures exist on the page
+        sp_anchor = page.get_by_text("RVS CODE", exact=True).first
+        try:
+            sp_anchor.wait_for(state="visible", timeout=10000)
+        except Exception:
+            if sp_anchor.count() == 0:
+                print("No surgical procedures found on page - skipping session date entry.")
+                return
 
         # Guard: every session date must fall within the claim's own
         # Admission Date / Discharge Date range. Read both straight
@@ -900,33 +1072,33 @@ class CF2Automation:
         admission_input = page.locator('input[id^="admissionDate-"]').first
         discharge_input = page.locator('input[id^="dischargeDate-"]').first
 
-        admission_raw = admission_input.input_value().strip()
-        discharge_raw = discharge_input.input_value().strip()
+        admission_raw = admission_input.input_value().strip() if admission_input.count() > 0 else ""
+        discharge_raw = discharge_input.input_value().strip() if discharge_input.count() > 0 else ""
 
         try:
-            admission_date = datetime.strptime(admission_raw, "%m-%d-%Y").date()
-            discharge_date = datetime.strptime(discharge_raw, "%m-%d-%Y").date()
+            admission_date = datetime.strptime(admission_raw, "%m-%d-%Y").date() if admission_raw else None
+            discharge_date = datetime.strptime(discharge_raw, "%m-%d-%Y").date() if discharge_raw else None
         except ValueError as e:
-            raise RuntimeError(
-                f"Could not read Admission/Discharge date from the page "
-                f"(admission='{admission_raw}', discharge='{discharge_raw}'): {e}"
-            )
+            print(f"Warning: Could not parse Admission/Discharge date ({e})")
+            admission_date = None
+            discharge_date = None
 
-        def _as_date(value):
-            return value.date() if hasattr(value, "date") else value
+        if admission_date and discharge_date:
+            def _as_date(value):
+                return value.date() if hasattr(value, "date") else value
 
-        out_of_range = [
-            session_date for session_date in data.session_dates
-            if not (admission_date <= _as_date(session_date) <= discharge_date)
-        ]
+            out_of_range = [
+                session_date for session_date in data.session_dates
+                if not (admission_date <= _as_date(session_date) <= discharge_date)
+            ]
 
-        if out_of_range:
-            raise RuntimeError(
-                "The session dates entered do not fall within the "
-                "admission and discharge date range."
-            )
+            if out_of_range:
+                raise RuntimeError(
+                    "The session dates entered do not fall within the "
+                    "admission and discharge date range."
+                )
 
-        print(f"Filling {len(data.session_dates)} session dates...")
+        print(f"Checking/Filling {len(data.session_dates)} session dates...")
         for i, session_date in enumerate(data.session_dates):
             date_str = session_date.strftime("%m%d%Y")
 
@@ -934,7 +1106,15 @@ class CF2Automation:
                 date_input = page.locator(
                     f'input[id^="surgicalProcedures0sessions{i}sessionDate-Date"]'
                 ).first
+                if date_input.count() == 0:
+                    print(f"  Session {i + 1} date input not found on page.")
+                    return
                 date_input.scroll_into_view_if_needed()
+                current_val = date_input.input_value().strip()
+                if current_val:
+                    print(f"  Session {i + 1} date already present: '{current_val}' - skipping.")
+                    return
+                print(f"  Session {i + 1} date is empty - entering {date_str}...")
                 date_input.click()
                 date_input.type(date_str, delay=100)
                 date_input.press("Tab")
@@ -952,6 +1132,7 @@ class CF2Automation:
             return
 
         sp_anchor = page.get_by_text("RVS CODE", exact=True).first
+        sp_anchor.wait_for(state="visible", timeout=10000)
         sp_anchor.scroll_into_view_if_needed()
         page.wait_for_timeout(300)
 
@@ -990,6 +1171,67 @@ class CF2Automation:
         page.wait_for_timeout(1000)
 
     def _add_doctor(self, page, data):
+        # --- API-first path -------------------------------------------
+        # Confirmed via HAR: GetAllPHICDoctorByClaimId (empty = guard
+        # check), GetDoctorByAccreditationNumber (what "Autofill Doctor
+        # Information" triggers today), IsDoctorAccredited (eclaimsapi),
+        # NewPHICDoctor.
+        try:
+            ids = self._get_ids(page)
+            existing_doctors = cf2_api.get_doctors(ids["claim_id"])
+            if existing_doctors:
+                print(
+                    "Doctors already has a row (via API) - skipping to "
+                    "avoid duplicating it."
+                )
+                return
+
+            client_id = cf2_api.get_client_id()
+            hospital_identity = cf2_api.get_hospital_identity(ids["transmittal_id"])
+
+            # NOTE: unlike the UI path (which strips this to digits-only
+            # before typing into the search field), the API expects the
+            # accreditation number in its normal dashed form
+            # ("1202-2154632-0") - confirmed via HAR. Passed through
+            # as-is from data, on the assumption it's already in that
+            # form in the source spreadsheet; worth double-checking on
+            # the first real test.
+            accreditation_number = data.accreditation_no.strip()
+
+            admission_date_str = data.first_treatment.strftime("%m-%d-%Y")
+            discharge_date_iso = cf2_api.to_utc_midnight_iso(data.last_treatment)
+            sign_date_str = data.last_treatment.strftime("%m-%d-%Y")
+
+            cf2_api.add_doctor(
+                ids["claim_id"],
+                client_id,
+                accreditation_number,
+                sign_date_str,
+                admission_date_str,
+                discharge_date_iso,
+                hospital_identity,
+            )
+
+            print("Doctor added (via API).")
+            # No reload here (removed) - same reasoning as
+            # _add_discharge_diagnosis / _add_surgical_procedure: this
+            # runs in the middle of fill_cf2(), after
+            # _fill_referral_and_accommodation and
+            # _fill_disposition_and_diagnosis have already typed into
+            # other CF2 fields, and before _save_cf2() actually
+            # persists them. A reload here would wipe that unsaved
+            # input the same way. Nothing downstream (benefits/fees,
+            # access-records date, the CF2 save itself) reads Doctor
+            # DOM state, so there's no guard relying on a refreshed
+            # page here either.
+            return
+        except Exception as e:
+            print(
+                f"WARNING: API path for Doctor failed ({e}) - falling "
+                f"back to UI automation."
+            )
+
+        # --- UI fallback -------------------------------------------
         # Guard: check THIS section's own row count before clicking its
         # NEW button — same pattern as Discharge Diagnosis. Scoped to
         # the Doctors table specifically (anchor on its heading, walk

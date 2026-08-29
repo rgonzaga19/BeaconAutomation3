@@ -21,6 +21,88 @@ const windows = {
   about: null,
 };
 
+// ---------------------------------------------------------------------------
+// Server log forwarding — the Python server/automation's stdout/stderr only
+// ever reached console.log/console.error in the MAIN process above. That's
+// invisible once packaged (windowsHide:true means there's no console window
+// to see it in at all), so "our console" only ever showed Electron's own
+// renderer devtools output, never a single line of what the automation was
+// actually doing or failing on.
+//
+// Fix: forward every line to (a) a persistent log file, so it's there after
+// the fact even if no window happened to be open when it printed, and (b)
+// every open renderer window via IPC, so a log panel in the UI can show it
+// live. Chunks from a 'data' event don't line up with actual log lines (a
+// single print() can arrive split across chunks, or several prints can
+// arrive in one chunk), so this buffers and splits on '\n' rather than
+// treating each 'data' event as one line.
+// ---------------------------------------------------------------------------
+const LOG_DIR = path.join(app.getPath("userData"), "logs");
+fs.mkdirSync(LOG_DIR, { recursive: true });
+const LOG_FILE = path.join(LOG_DIR, "automation.log");
+
+// Create the file immediately (even empty) rather than waiting for the
+// first write. Without this, shell.showItemInFolder() below has nothing
+// to point at until the automation has actually printed something — on
+// Windows that means "Open Log File" silently does nothing on a fresh
+// install/relaunch instead of opening Explorer at all.
+if (!fs.existsSync(LOG_FILE)) {
+  try {
+    fs.writeFileSync(LOG_FILE, "");
+  } catch (e) {
+    console.error("[logs] could not create log file:", e);
+  }
+}
+let logStream = null;
+
+function getLogStream() {
+  if (!logStream) {
+    logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
+  }
+  return logStream;
+}
+
+function broadcastServerLog(level, line) {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send("server:log", { level, line, timestamp: Date.now() });
+    }
+  });
+}
+
+function makeLineForwarder(level) {
+  let buffer = "";
+  return (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split("\n");
+    // Last element is either "" (chunk ended on a newline) or a partial
+    // line still waiting for more data — keep it buffered either way.
+    buffer = lines.pop();
+
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r$/, "");
+      if (!line) continue;
+
+      // Still print to the main-process console too — free in dev mode
+      // (running `electron .` from a terminal) and harmless otherwise.
+      if (level === "error") {
+        console.error(`[server] ${line}`);
+      } else {
+        console.log(`[server] ${line}`);
+      }
+
+      try {
+        const ts = new Date().toISOString();
+        getLogStream().write(`[${ts}] [${level}] ${line}\n`);
+      } catch (e) {
+        // Logging failure shouldn't be fatal to the app itself.
+      }
+
+      broadcastServerLog(level, line);
+    }
+  };
+}
+
 
 let downloadedInstaller = null;
 
@@ -89,16 +171,31 @@ function startServer() {
   // checkmark (✓) used in some automation log output — that mismatch
   // throws a UnicodeEncodeError ("'charmap' codec can't encode...")
   // even though the underlying automation itself completed successfully.
+  //
+  // PYTHONUNBUFFERED=1 is equally critical and was missing before: when
+  // stdout isn't a real terminal (piped into spawn(), as it always is
+  // here), CPython silently switches stdout from line-buffered to fully
+  // block-buffered. print() calls then sit in an internal buffer and
+  // never actually reach this process's 'data' event until that buffer
+  // fills or the child exits — stderr is unbuffered by default, which
+  // is why, without this, the log showed every Werkzeug access-log line
+  // (stderr) but not a single print() from cf2_automation.py itself
+  // (stdout) — it looked like the automation wasn't logging anything at
+  // all, when really its output was just stuck in a buffer.
   const pythonEnv = {
     ...process.env,
     BEABOTS_PORT: String(SERVER_PORT),
     PYTHONIOENCODING: "utf-8",
     PYTHONUTF8: "1",
+    PYTHONUNBUFFERED: "1",
   };
 
   if (isDev) {
     // Dev mode: run the Flask/SocketIO server straight from source.
-    serverProcess = spawn("python", ["server.py"], {
+    // "-u" is redundant with PYTHONUNBUFFERED above (both do the same
+    // thing in CPython) but kept as a belt-and-suspenders since it's
+    // free and makes the intent explicit at the call site too.
+    serverProcess = spawn("python", ["-u", "server.py"], {
       cwd: __dirname,
       env: pythonEnv,
       windowsHide: true,
@@ -115,9 +212,18 @@ function startServer() {
     });
   }
 
-  serverProcess.stdout?.on("data", (data) => console.log(`[server] ${data}`));
-  serverProcess.stderr?.on("data", (data) => console.error(`[server] ${data}`));
-  serverProcess.on("exit", (code) => console.log(`[server] exited with code ${code}`));
+  serverProcess.stdout?.on("data", makeLineForwarder("info"));
+  serverProcess.stderr?.on("data", makeLineForwarder("error"));
+  serverProcess.on("exit", (code) => {
+    const line = `exited with code ${code}`;
+    console.log(`[server] ${line}`);
+    try {
+      getLogStream().write(`[${new Date().toISOString()}] [info] ${line}\n`);
+    } catch (e) {
+      // ignore
+    }
+    broadcastServerLog(code === 0 ? "info" : "error", line);
+  });
 }
 
 function stopServer() {
@@ -722,6 +828,34 @@ ipcMain.handle("app:installUpdate", async () => {
 
 
 // ---------------------------------------------------------------------------
+// IPC — server/automation log access (see broadcastServerLog above for the
+// live stream; these are for a renderer that just opened and wants
+// history, or a "show me the log file" button).
+// ---------------------------------------------------------------------------
+ipcMain.handle("logs:getRecent", async (_event, maxLines = 500) => {
+  try {
+    const content = fs.readFileSync(LOG_FILE, "utf-8");
+    const lines = content.split("\n").filter(Boolean);
+    return lines.slice(-maxLines);
+  } catch (e) {
+    return [];
+  }
+});
+
+ipcMain.handle("logs:openFile", async () => {
+  try {
+    if (!fs.existsSync(LOG_FILE)) {
+      fs.writeFileSync(LOG_FILE, "");
+    }
+    shell.showItemInFolder(LOG_FILE);
+    return { opened: true };
+  } catch (e) {
+    console.error("[logs] failed to open log file:", e);
+    return { opened: false, error: String(e) };
+  }
+});
+
+// ---------------------------------------------------------------------------
 // IPC — native dialogs (replace filedialog.askopenfilename /
 // askdirectory / asksaveasfilename)
 // ---------------------------------------------------------------------------
@@ -819,4 +953,13 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("will-quit", stopServer);
+app.on("will-quit", () => {
+  stopServer();
+  if (logStream) {
+    try {
+      logStream.end();
+    } catch (e) {
+      // ignore
+    }
+  }
+});

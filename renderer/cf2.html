@@ -325,6 +325,19 @@
     gap: 8px;
   }
   #cf2LogBox { flex: 1; min-height: 0; }
+  /* Raw stdout/stderr forwarded from main.js (see cf2.js's onServerLog) —
+     level="ERROR" lines get a distinct color so a failure/WARNING print
+     from cf2_automation.py actually stands out in the log instead of
+     blending into the plain INFO stream. */
+  .log-line.ERROR { color: var(--error, #ff6b6b); }
+  .open-log-link {
+    color: var(--accent);
+    font-size: 10.5px;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .open-log-link:hover { color: var(--text-pri); }
   #startBtn {
     width: 100%;
     margin-top: 4px;
@@ -473,7 +486,11 @@
       </div>
 
       <div class="log-section">
-        <div class="section-label"><span>▸ EXECUTION LOG</span><div class="rule"></div></div>
+        <div class="section-label">
+          <span>▸ EXECUTION LOG</span>
+          <div class="rule"></div>
+          <span id="openLogFileLink" class="open-log-link" title="Open the full raw log file">🗒 Log File</span>
+        </div>
         <div class="log-box" id="cf2LogBox"></div>
         <button class="solid-btn" id="startBtn">Start Automation</button>
       </div>

@@ -49,4 +49,15 @@ contextBridge.exposeInMainWorld("beabots", {
   selectExcelFile: () => ipcRenderer.invoke("dialog:selectExcelFile"),
   selectSoaFolder: (initialDir) => ipcRenderer.invoke("dialog:selectSoaFolder", initialDir),
   saveExcelTemplate: (mode) => ipcRenderer.invoke("dialog:saveExcelTemplate", mode),
+
+  // Server/automation log stream (see main.js's makeLineForwarder /
+  // broadcastServerLog) — everything the Python server and automation
+  // print to stdout/stderr, forwarded here instead of only reaching the
+  // invisible main-process console.
+  getRecentLogs: (maxLines) => ipcRenderer.invoke("logs:getRecent", maxLines),
+  openLogFile: () => ipcRenderer.invoke("logs:openFile"),
+  onServerLog: (callback) => {
+    ipcRenderer.removeAllListeners("server:log");
+    ipcRenderer.on("server:log", (_event, payload) => callback(payload));
+  },
 });
