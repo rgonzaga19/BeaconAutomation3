@@ -1420,14 +1420,15 @@ class CF2Automation:
         is used for these fields.
 
         Beacon's GET /api/PHICDocument/GetCf2PdfDetails endpoint is used only
-        to obtain the complete current PDF data object. The three fields this
-        automation owns are then changed and the complete object is submitted
+        to obtain the complete current PDF data object. The Part III patient/member
+        name fields and Part IV HCI representative fields are then changed, and
+        the complete object is submitted
         to POST /api/PHICDocument/NewPdfClaimFormTwo.
 
         IMPORTANT: GetCf2PdfDetails is NOT used as a post-save verification
         source. A real successful save returned HTTP 200 from
         NewPdfClaimFormTwo, while a subsequent GetCf2PdfDetails continued to
-        return those three rendered PDF fields as null. The authoritative
+        return some rendered PDF fields as null. The authoritative
         verification for this endpoint is the generated Claim Form 2 PDF,
         which was observed containing the submitted signature/designation/date.
 
@@ -1441,22 +1442,51 @@ class CF2Automation:
                 f"GetCf2PdfDetails returned no usable data for claimId={claim_id}."
             )
 
+        # Part III patient/member signature name must come from Beacon's
+        # authoritative CF1 record, not from the uploaded automation data.
+        cf1_summary = cf2_api.get_cf1_summary(claim_id)
+        patient_fullname = str(
+            (cf1_summary or {}).get("patientFullname") or ""
+        ).strip()
+        if not patient_fullname:
+            raise cf2_api.Cf2ApiError(
+                f"GetPHICCF1Summary returned no patientFullname "
+                f"for claimId={claim_id}."
+            )
+
         billing_clerk_name = self._get_billing_clerk_name()
         designation = self._get_official_capacity_designation()
-        date_signed_iso = cf2_api.to_date_signed_iso(data.last_treatment)
 
+        # NewPdfClaimFormTwo renders the timestamp in Philippine local time.
+        # To display the claim's local calendar date (e.g. 07-01-2026), send
+        # local midnight as the previous UTC day at 16:00, without milliseconds.
+        date_signed_iso = cf2_api.to_utc_midnight_iso(
+            data.last_treatment
+        ).replace(".000Z", "Z")
+
+        # Part III - member/patient/authorized representative.
+        base["sigOverPrintedNameOfAuthRep"] = patient_fullname
+        base["patientFullname"] = patient_fullname
+
+        # Part IV - authorized HCI representative.
         base["signatureOverPrintedNameOfAuthHCIRep"] = billing_clerk_name
         base["officialCapacityDesignation"] = designation
         base["dateSigned"] = date_signed_iso
 
         print("Saving Claim Form 2 PDF fields via API...")
-        cf2_api.new_pdf_claim_form_two(claim_id, base)
         print(
-            "Claim Form 2 PDF fields saved via API: "
+            "  Part III: "
+            f"patientFullname='{patient_fullname}', "
+            f"sigOverPrintedNameOfAuthRep='{patient_fullname}'"
+        )
+        print(
+            "  Part IV: "
             f"signature='{billing_clerk_name}', "
             f"designation='{designation}', "
-            f"dateSigned='{date_signed_iso}'."
+            f"dateSigned='{date_signed_iso}'"
         )
+        cf2_api.new_pdf_claim_form_two(claim_id, base)
+        print("Claim Form 2 PDF fields saved via API.")
         return True
 
     def _first_case_tag_present(self, page):
