@@ -1413,6 +1413,52 @@ class CF2Automation:
             )
             return False
 
+    def _fill_claim_form_two_via_api(self, claim_id, data):
+        """
+        Save the Claim Form 2 PDF signature block entirely through Beacon's
+        API. No Claim Form 2 UI page is opened and no Playwright interaction
+        is used for these fields.
+
+        Beacon's GET /api/PHICDocument/GetCf2PdfDetails endpoint is used only
+        to obtain the complete current PDF data object. The three fields this
+        automation owns are then changed and the complete object is submitted
+        to POST /api/PHICDocument/NewPdfClaimFormTwo.
+
+        IMPORTANT: GetCf2PdfDetails is NOT used as a post-save verification
+        source. A real successful save returned HTTP 200 from
+        NewPdfClaimFormTwo, while a subsequent GetCf2PdfDetails continued to
+        return those three rendered PDF fields as null. The authoritative
+        verification for this endpoint is the generated Claim Form 2 PDF,
+        which was observed containing the submitted signature/designation/date.
+
+        NewPdfClaimFormTwo returns an empty JSON response body on success, so
+        _post() treating the successful response as None is expected.
+        """
+        client_id = cf2_api.get_client_id()
+        base = cf2_api.get_cf2_pdf_details(claim_id, client_id)
+        if not isinstance(base, dict) or not base:
+            raise cf2_api.Cf2ApiError(
+                f"GetCf2PdfDetails returned no usable data for claimId={claim_id}."
+            )
+
+        billing_clerk_name = self._get_billing_clerk_name()
+        designation = self._get_official_capacity_designation()
+        date_signed_iso = cf2_api.to_date_signed_iso(data.last_treatment)
+
+        base["signatureOverPrintedNameOfAuthHCIRep"] = billing_clerk_name
+        base["officialCapacityDesignation"] = designation
+        base["dateSigned"] = date_signed_iso
+
+        print("Saving Claim Form 2 PDF fields via API...")
+        cf2_api.new_pdf_claim_form_two(claim_id, base)
+        print(
+            "Claim Form 2 PDF fields saved via API: "
+            f"signature='{billing_clerk_name}', "
+            f"designation='{designation}', "
+            f"dateSigned='{date_signed_iso}'."
+        )
+        return True
+
     def _first_case_tag_present(self, page):
         """
         Returns True if the Surgical Procedure row is already tagged as
@@ -2049,401 +2095,11 @@ class CF2Automation:
 
         print("Statement of Account Signatories verified via API.")
 
-        def _open_claim_forms():
-            page.get_by_role(
-                "link",
-                name="CLAIM FORMS"
-            ).click()
-
+        # Claim Form 2 PDF signature block is now fully API-based.
+        # Do NOT open the Claim Forms page / CF2 PDF tab here.
         self._step(
-            "Opening Claim Forms...",
-            _open_claim_forms,
+            "Saving Claim Form 2 PDF fields via API...",
+            lambda: self._fill_claim_form_two_via_api(claim_id, data),
             critical=True,
         )
-        page.wait_for_timeout(500)
-
-        def _open_claim_form_2():
-            """Opens Claim Form 2 in a new tab, retrying in place if Beacon
-            is slow to load rather than letting one timeout fail the whole
-            patient.
-
-            Beacon can intermittently take longer than Playwright's default
-            timeout to actually spawn/load the new tab — when that happens
-            we used to let the TimeoutError propagate straight up and fail
-            the patient on the spot. Now: on a timeout, close whatever tab
-            did (or didn't) come up, reload the Claim Forms list page to
-            get back to a clean state, and retry the click a few times
-            before finally giving up.
-            """
-            nonlocal page
-
-            attempts = 3
-            last_error = None
-
-            for attempt in range(1, attempts + 1):
-                new_page = None
-                try:
-                    card = page.locator('a[href*="download-pdf/cf2"]').locator("..")
-                    card.hover()
-
-                    with page.context.expect_page(timeout=20000) as new_page_info:
-                        page.locator(
-                            'a[href*="download-pdf/cf2"]'
-                        ).click()
-
-                    new_page = new_page_info.value
-                    new_page.wait_for_load_state("networkidle", timeout=30000)
-
-                    # Success — hand the new tab back to the caller.
-                    page = new_page
-                    return
-                except PlaywrightTimeoutError as e:
-                    last_error = e
-                    print(
-                        f"WARNING: Opening Claim Form 2 timed out on "
-                        f"attempt {attempt}/{attempts} (Beacon loading too "
-                        f"long): {e}"
-                    )
-
-                    # Don't leave a half-loaded/stuck tab behind — close it
-                    # (if one actually opened) so the retry starts clean
-                    # instead of piling up orphaned tabs.
-                    if new_page is not None:
-                        try:
-                            new_page.close()
-                        except Exception:
-                            pass
-
-                    if attempt < attempts:
-                        print("Reloading Claim Forms page and retrying...")
-                        try:
-                            page.reload()
-                            page.wait_for_load_state("networkidle", timeout=15000)
-                        except Exception as reload_err:
-                            print(
-                                f"WARNING: Reload after timeout failed: "
-                                f"{reload_err}"
-                            )
-                        page.wait_for_timeout(1000)
-
-            raise Exception(
-                f"Could not open Claim Form 2 after {attempts} attempts — "
-                f"Beacon kept timing out: {last_error}"
-            )
-
-        cf2_tab_opened = self._step(
-            "Opening Claim Form 2...",
-            _open_claim_form_2,
-            critical=True,
-        )
-
-        page.wait_for_timeout(500)
-
-        # ------------------------------------------------------------
-        # From here on, NOTHING is allowed to skip the SAVE click.
-        # Each field is filled in its own try/except so one bad field
-        # (missing element, timeout, stale reference, etc.) can't stop
-        # the others from being attempted, and — critically — can't
-        # stop us from reaching the SAVE button at the end. Whatever
-        # data did make it into the form still needs to be persisted.
-        # ------------------------------------------------------------
-        def _fill_signature_over_printed_name():
-            billing_clerk_name = self._get_billing_clerk_name()
-
-            page.wait_for_selector(
-                "#signatureOverPrintedNameOfAuthHCIRep",
-                state="visible",
-                timeout=60000,
-            )
-
-            signature_input = page.locator(
-                "#signatureOverPrintedNameOfAuthHCIRep"
-            )
-
-            signature_input.click()
-            signature_input.press("Control+A")
-            signature_input.press("Backspace")
-            signature_input.fill(billing_clerk_name)
-            signature_input.press("Tab")
-
-        def _fill_official_capacity_designation():
-            designation = self._get_official_capacity_designation()
-
-            designation_input = page.locator(
-                "#officialCapacityDesignation"
-            )
-
-            designation_input.click()
-            designation_input.press("Control+A")
-            designation_input.press("Backspace")
-            designation_input.fill(designation)
-            designation_input.press("Tab")
-
-        def _fill_hci_representative_date_signed():
-            """
-            Opens the "Add Date" calendar picker next to Date Signed under
-            PART IV - CERTIFICATION OF CONSUMPTION OF HEALTH CARE
-            INSTITUTION (the HCI Representative's signature block) and
-            selects data.last_treatment — the same date already reused
-            everywhere else on this form (Doctor Sign Date, Access Patient
-            Records date, Statement of Account signatory dates).
-
-            Whatever happens here must never block the rest of the form or
-            the final SAVE click. If anything fails after the picker was
-            opened, the popup is dismissed (Cancel, then Escape as a
-            fallback) before moving on — an open calendar overlay left
-            sitting on screen could otherwise intercept the SAVE click that
-            always runs after this, regardless of what happened here.
-            """
-            target_date = data.last_treatment
-            picker_opened = False
-
-            def _open_picker():
-                nonlocal picker_opened
-                # Scope to the button that immediately follows the
-                # Official Capacity/Designation field in DOM order, since
-                # that's the "Add Date" icon sitting on the same signature
-                # line (Signature | Designation | Date Signed).
-                add_date_btn = page.locator(
-                    "#officialCapacityDesignation"
-                ).locator(
-                    "xpath=following::button[contains(@class,'pdfIndicator')][1]"
-                )
-
-                if add_date_btn.count() == 0:
-                    add_date_btn = page.get_by_role(
-                        "button", name="Add Date"
-                    ).first
-
-                add_date_btn.scroll_into_view_if_needed()
-                add_date_btn.click(force=True)
-                picker_opened = True
-                page.wait_for_timeout(500)
-
-            def _navigate_and_select():
-                nonlocal picker_opened
-                # Arrow buttons are identified by their fixed SVG icon path
-                # (chevron-right = next month, chevron-left = previous
-                # month) since neither button carries a class or label.
-                next_month_btn = page.locator(
-                    'button:has(path[d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"])'
-                )
-                prev_month_btn = page.locator(
-                    'button:has(path[d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"])'
-                )
-
-                # DO NOT assume the picker opens on "today". That's only
-                # true the FIRST time it's opened on a fresh page load.
-                # Confirmed via live testing + DOM inspection: once the
-                # calendar has been opened and closed once, Beacon's
-                # picker component retains whatever month it was left
-                # on — so on the 2nd/3rd run the code was still computing
-                # months_diff against "today" while the picker had
-                # actually opened on a completely different month,
-                # landing one month further off each run (compounding
-                # drift).
-                #
-                # Fix: read the month/year Beacon is CURRENTLY showing
-                # straight from the calendar header text (e.g. "July
-                # 2026") right after opening the picker, and compute
-                # months_diff against THAT instead of datetime.now().
-                # DOM inspection (right-click > Inspect on the header)
-                # confirms the header is a div styled
-                # style="height: inherit; padding-top: 12px;" containing
-                # exactly the "<Month> <Year>" text, sitting between the
-                # prev/next arrow buttons in the same flex row. Anchoring
-                # the lookup to "the padding-top:12px div that follows
-                # the prev-month button" scopes it to the picker's own
-                # header instead of matching unrelated elements with a
-                # similar inline style elsewhere on the page.
-                header_div = prev_month_btn.locator(
-                    "xpath=following::div[contains(@style,'padding-top: 12px')][1]"
-                )
-                header_text = header_div.inner_text().strip()
-                displayed_month = datetime.strptime(header_text, "%B %Y")
-
-                months_diff = (
-                    (target_date.year - displayed_month.year) * 12
-                    + (target_date.month - displayed_month.month)
-                )
-
-                btn_to_click = next_month_btn if months_diff > 0 else prev_month_btn
-
-                for _ in range(abs(months_diff)):
-                    btn_to_click.click()
-                    page.wait_for_timeout(250)
-
-                print(
-                    f"  Date Signed picker: displayed_month={header_text}, "
-                    f"target={target_date.strftime('%m/%d/%Y')}, "
-                    f"months_diff={months_diff}"
-                )
-
-                # Day cells are 42px-wide buttons rendered left-to-right,
-                # top-to-bottom for the CURRENT month only. Confirmed via a
-                # live run: leading blank slots before day 1 (e.g. the 2
-                # empty cells before Jul 1, 2026, a Wednesday) are NOT
-                # clickable buttons — they're empty placeholder cells — so
-                # the button list starts right at day 1. (An earlier version
-                # added calendar.monthrange()'s weekday offset on top of
-                # this, which double-counted those leading cells and landed
-                # 2 days late — e.g. clicking "3" instead of "1".) So the
-                # button index is simply the day number minus one.
-                day_cells = page.locator('button[style*="width: 42px"]')
-                cell_index = target_date.day - 1
-
-                print(f"  Date Signed picker: cell_index={cell_index}")
-
-                day_cells.nth(cell_index).click()
-                page.wait_for_timeout(300)
-
-                ok_button = page.get_by_role("button", name="OK", exact=True)
-                if ok_button.count() == 0:
-                    ok_button = page.get_by_text(
-                        re.compile(r"^OK$", re.IGNORECASE)
-                    )
-                ok_button.first.click()
-                picker_opened = False  # OK closes the popup on success
-                page.wait_for_timeout(300)
-
-            def _close_leftover_picker():
-                """
-                Best-effort cleanup only — never raises. Tries CANCEL
-                first (the picker's own dismiss control), then Escape as a
-                generic fallback, so a half-finished date selection can't
-                leave an overlay sitting on top of the SAVE button.
-                """
-                try:
-                    cancel_btn = page.get_by_role(
-                        "button", name="CANCEL", exact=False
-                    )
-                    if cancel_btn.count() > 0:
-                        cancel_btn.first.click(timeout=2000)
-                    else:
-                        page.keyboard.press("Escape")
-                except Exception:
-                    try:
-                        page.keyboard.press("Escape")
-                    except Exception:
-                        pass
-                page.wait_for_timeout(300)
-
-            try:
-                print("Opening Date Signed picker (HCI Representative)...")
-                _open_picker()
-
-                print(
-                    f"Selecting Date Signed (HCI Representative): "
-                    f"{target_date.strftime('%m/%d/%Y')}..."
-                )
-                _navigate_and_select()
-
-                print("Date Signed (HCI Representative) set successfully.")
-            except Exception as e:
-                print(
-                    f"WARNING: Date Signed (HCI Representative) step "
-                    f"failed: {e}. Skipping this field and continuing — "
-                    f"the CF2 form will still be saved."
-                )
-                if picker_opened:
-                    _close_leftover_picker()
-            page.wait_for_timeout(300)
-
-        def _save_claim_form_2():
-            """
-            Always-attempted fallback. Retries the click a few times and,
-            if Playwright's normal click still can't land it (e.g. an
-            overlay or animation is blocking actionability), falls back to
-            a raw JS click on the SAVE button so the click reaches the
-            page's SAVE handler no matter what happened earlier in this
-            section.
-            """
-            save_button = page.get_by_role("button", name="SAVE", exact=True)
-
-            last_error = None
-            for attempt in range(1, 4):
-                try:
-                    save_button.wait_for(state="visible", timeout=15000)
-                    save_button.click(timeout=15000)
-                    page.wait_for_load_state("networkidle", timeout=15000)
-                    print(f"CF2 saved successfully (attempt {attempt}).")
-                    return
-                except Exception as e:
-                    last_error = e
-                    print(f"WARNING: CF2 save attempt {attempt} failed: {e}")
-                    page.wait_for_timeout(1000)
-
-            # Last-ditch attempt: bypass Playwright's actionability checks
-            # entirely in case the button exists but is being blocked by
-            # something (overlay, animation, focus trap, etc.).
-            try:
-                page.evaluate(
-                    """() => {
-                        const btns = [...document.querySelectorAll('button')];
-                        const save = btns.find(
-                            b => b.textContent.trim().toUpperCase() === 'SAVE'
-                        );
-                        if (save) save.click();
-                    }"""
-                )
-                page.wait_for_timeout(1500)
-                print("CF2 save fallback: clicked SAVE via JS evaluate.")
-            except Exception as e:
-                print(
-                    f"ERROR: All CF2 save attempts failed. "
-                    f"Last click error: {last_error}. JS fallback error: {e}"
-                )
-                raise
-
-        def _fill_cf2_fields_then_save():
-            if not cf2_tab_opened:
-                # No CF2 tab to fill or save — nothing to do here.
-                return
-
-            self._step(
-                "Filling Signature Over Printed Name of Authorized HCI Representative...",
-                _fill_signature_over_printed_name,
-                critical=False,
-            )
-            page.wait_for_timeout(300)
-
-            self._step(
-                "Filling Official Capacity/Designation...",
-                _fill_official_capacity_designation,
-                critical=False,
-            )
-            page.wait_for_timeout(300)
-
-            self._step(
-                "Filling Date Signed (HCI Representative)...",
-                _fill_hci_representative_date_signed,
-                critical=False,
-            )
-            page.wait_for_timeout(300)
-
-        try:
-            _fill_cf2_fields_then_save()
-        finally:
-            # SAVE fires regardless of what happened above — error,
-            # timeout, or otherwise — as long as the CF2 tab is open.
-            if cf2_tab_opened:
-                self._step(
-                    "Saving CF2 (fallback - always attempted)...",
-                    _save_claim_form_2,
-                    critical=False,
-                )
-
-        page.wait_for_timeout(1000)
-
-        def _close_claim_form_2_tab():
-            nonlocal page
-            page.wait_for_timeout(1000)  # let the save actually finish before closing
-            page.close()
-            page = original_page
-            page.bring_to_front()
-
-        self._step(
-            "Closing Claim Form 2 tab...",
-            _close_claim_form_2_tab,
-            critical=False,
-        )
+        print("Claim Form 2 completed via API — no Claim Form 2 UI was opened.")

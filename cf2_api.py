@@ -28,6 +28,12 @@ Covered here (confirmed via HAR, request AND response bodies inspected):
     "just save the session date" endpoint to call.
   - Doctors: read / lookup by accreditation number / accreditation
     check / create
+  - Claim Form 2 PDF signature block: read current PDF data via
+    GetCf2PdfDetails and save the complete object via NewPdfClaimFormTwo.
+    The generated CF2 PDF was verified to contain the submitted HCI
+    representative signature, designation, and date. GetCf2PdfDetails is
+    intentionally NOT used as post-save verification because Beacon's
+    response does not echo those rendered PDF fields after a successful save.
 
 Deliberately NOT covered here (still pure UI automation in
 cf2_automation.py) because we don't have a captured/confirmed endpoint,
@@ -42,10 +48,6 @@ or the capture was incomplete:
     bite, cataract sections, etc. all live in this same record).
     Blindly submitting a payload built from scratch risks wiping fields
     this migration doesn't know about.
-  - Statement of Account's "Claim Form 2" PDF tab signature fields -
-    NewPdfClaimFormTwo (confirmed) just generates the PDF; whatever the
-    signature/date-signed SAVE on that tab actually calls wasn't
-    captured (that HAR only has the one PDF-generation request).
 """
 
 import re
@@ -771,4 +773,90 @@ def add_doctor(
         admission_date_str,
         discharge_date_iso,
         is_accredited,
+    )
+
+
+def to_date_signed_iso(local_date):
+    """
+    NewPdfClaimFormTwo's dateSigned field uses yet another date
+    convention from the rest of this codebase - confirmed via HAR:
+    local date 07-01-2026 was sent as dateSigned="2026-07-01T16:00:00Z".
+    That's the SAME calendar day (unlike to_utc_midnight_iso, which
+    shifts back a day), at 16:00 UTC, with a bare "Z" and no
+    milliseconds (unlike to_utc_midnight_iso/to_utc_noon_iso's
+    ".000Z"). Accepts a date or datetime; returns that exact string
+    format.
+    """
+    d = local_date.date() if hasattr(local_date, "date") else local_date
+    return d.strftime("%Y-%m-%dT16:00:00Z")
+
+
+def get_cf2_pdf_details(claim_id, client_id):
+    """
+    GET the current data for the Claim Form 2 PDF page (the page at
+    .../eclaims/download-pdf/cf2/... - NOT the same as the CF2 data
+    tab covered by get_cf2()/edit_cf2() elsewhere in this file; this is
+    a completely separate page/endpoint pair confirmed via a fresh HAR
+    capture).
+
+    NOTE: this HAR capture did not include the response body (DevTools
+    HAR export can omit response content depending on export
+    settings), so the exact shape returned here is INFERRED from what
+    a real NewPdfClaimFormTwo save request sent back (see
+    new_pdf_claim_form_two()'s docstring for that full field list) -
+    not independently confirmed the way get_cf2()'s shape was. Verify
+    with a real save before trusting this in the full pipeline
+    unattended - see verify_claim_form_two_api.py.
+    """
+    return _get(
+        "/api/PHICDocument/GetCf2PdfDetails",
+        params={"PHICClaimId": claim_id, "Type": "cf2", "clientId": client_id},
+    )
+
+
+def new_pdf_claim_form_two(claim_id, data):
+    """
+    Save the Claim Form 2 PDF page - confirmed via a fresh HAR capture
+    of a real, successful save (200 OK). The full "data" dict sent in
+    that capture (for reference/to sanity-check shape against
+    get_cf2_pdf_details()'s response before trusting it) included:
+
+        nameOfReferringHCI, bldgNoAndStreetName, cityMunicipality,
+        province, zipCode, pdNameOfReferralHCI, pdBldgNoAndStreetName,
+        pdCityMunicipality, pdProvince, pdZipCode,
+        phBenefitIsEnoughToCoverHCIAndPFCharges,
+        totalActualChargesHCIFees, totalActualChargesProfessionalFees,
+        totalActualChargesGrandTotal, benefitOfTheMemberPatient,
+        totalHCIFeesActualCharges, totalHCIFeesAmountAfterApplication,
+        totalHCIPhilHealthBenefit, totalHCIFeesAmount,
+        totalHCIFeesMemberPatient, totalHCIFeesHMO, totalHCIFeesOthers,
+        totalProfessionalFeesActualCharges,
+        totalProfessionalFeesAmountAfterApplication,
+        totalProfessionalPhilHealthBenefit, totalProfessionalFeesAmount,
+        totalProfessionalFeesMemberPatient, totalProfessionalFeesHMO,
+        totalProfessionalFeesOthers, totalCostOfPurchasesNone,
+        totalCostOfPurchasesTotalAmountChk, totalCostOfPurchasesTotalAmount,
+        totalCostOfDiagnosticNone, totalCostOfDiagnosticTotalAmountChk,
+        totalCostOfDiagnosticTotalAmount, sigOverPrintedNameOfAuthRep,
+        patientCheck, part3RepresentativeCheck, patientFullname,
+        signatureOverPrintedNameOfAuthHCIRep, officialCapacityDesignation,
+        dateSigned
+
+    Only the last three (signatureOverPrintedNameOfAuthHCIRep,
+    officialCapacityDesignation, dateSigned) are what this migration
+    actually needs to change - everything else must be carried through
+    from get_cf2_pdf_details() unchanged, same read-modify-write
+    pattern as edit_cf2().
+
+    claim_id is sent as a STRING (confirmed via HAR - "16563846", not
+    16563846) - pass str(claim_id) if unsure.
+    """
+    return _post(
+        "/api/PHICDocument/NewPdfClaimFormTwo",
+        json_body={
+            "phicClaimId": str(claim_id),
+            "type": "cf2",
+            "revision": "revision",
+            "data": data,
+        },
     )
