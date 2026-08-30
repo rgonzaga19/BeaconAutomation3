@@ -259,16 +259,14 @@ class CF2Automation:
         # of which path got here.
 
         self._step(
-            "Checking for Validate Eligibility button...",
-            lambda: self._validate_eligibility(page),
+            "Validating eligibility via API...",
+            lambda: self._validate_eligibility_via_api(page, data),
             critical=False,
         )
 
-        self._step(
-            "Checking Patient Type dropdown...",
-            lambda: self._check_and_select_patient_type(page),
-            critical=False,
-        )
+        # Patient Type no longer uses the UI in the normal path.
+        # _fill_and_save_cf2() persists O / Outpatient through EditPHICCF2
+        # when Beacon's current CF2 record does not already contain a value.
 
         # Discharge Diagnosis / Surgical Procedure / Doctor all go FIRST,
         # before any of the plain-text CF2 fields below are typed. Two
@@ -297,21 +295,10 @@ class CF2Automation:
         self._add_surgical_procedure(page, data)
         self._add_doctor(page, data)
 
-        def _sync_and_open_cf2():
-            page.reload(wait_until="networkidle")
-            page.wait_for_timeout(1000)
-            cf2_tab = page.get_by_text("CF2", exact=True).first
-            if cf2_tab.count() > 0:
-                cf2_tab.click()
-                page.wait_for_load_state("networkidle")
-                page.wait_for_timeout(500)
-
-        self._step(
-            "Reloading and opening CF2 tab to sync Discharge Diagnosis / Surgical Procedure "
-            "/ Doctor before filling the rest of CF2...",
-            _sync_and_open_cf2,
-            critical=False,
-        )
+        # CF2 tab reload/click removed from the normal path.
+        # Discharge Diagnosis / Surgical Procedure / Doctor are API-backed,
+        # and all downstream CF2 data writes use direct API calls, so there
+        # is no browser-side CF2 state that needs to be re-synchronized here.
 
         # Session dates must be persisted to Beacon BEFORE 1st Case Rate tagging.
         # For a single-session claim we now use the same full EditPHICCF2 payload
@@ -557,13 +544,27 @@ class CF2Automation:
         page.wait_for_timeout(1500)
         print("SUCCESS: PHIC Claim Details opened.")
 
-    def _validate_eligibility(self, page):
-        validate_btn = page.locator("button", has_text="Validate Eligibility")
-        if validate_btn.count() > 0:
-            validate_btn.first.click()
-            page.wait_for_load_state("networkidle")
-        else:
-            print("No validation required - skipping.")
+    def _validate_eligibility_via_api(self, page, data):
+        """Run Beacon's Validate Eligibility workflow without Playwright UI actions."""
+        ids = self._get_ids(page)
+        result = cf2_api.validate_claim_eligibility(
+            claim_id=ids["claim_id"],
+            transmittal_id=ids["transmittal_id"],
+            admission_date=data.first_treatment,
+            discharge_date=data.last_treatment,
+        )
+        if result.get("skipped"):
+            print("Eligibility already validated in CF1 - skipping duplicate PBEF generation.")
+            return True
+
+        saved = result.get("saved") or {}
+        print(
+            "Eligibility validated via API: "
+            f"status='{saved.get('claimStatusDescription')}', "
+            f"eligibleAsOf='{saved.get('eligibleAsOf')}', "
+            f"remainingDays='{saved.get('eligibilityRemainingDays')}'."
+        )
+        return True
 
     def _check_and_select_patient_type(self, page):
         """

@@ -17,6 +17,7 @@ name, required value, etc.) degrades to "no worse than before" rather
 than breaking a patient outright.
 
 Covered here (confirmed via HAR, request AND response bodies inspected):
+  - Claim eligibility validation: IsClaimEligible + EditPHICClaimEligibilityStatus
   - Discharge Diagnosis: read / ICD10 search / create / set-primary
   - Surgical Procedure: read / create
   - Case Rate ("1st Case Rate" tag): read / search / tag
@@ -189,6 +190,157 @@ def get_cf1_summary(claim_id):
         "/api/PHICCF1/GetPHICCF1Summary",
         params={"id": claim_id},
     )
+
+
+def _date_from_value(value):
+    """Return a date from a date/datetime/Beacon ISO-like value."""
+    if hasattr(value, "date") and not isinstance(value, str):
+        return value.date()
+    if hasattr(value, "year") and not isinstance(value, str):
+        return value
+    if not value:
+        raise Cf2ApiError("Expected a date value but received an empty value.")
+    text = str(value).strip()
+    # Beacon CF1 timestamps are ISO-like (e.g. 1963-05-25T00:00:00).
+    # Also accept the MM-DD-YYYY form used by the eClaims endpoint.
+    for candidate, fmt in (
+        (text.split("T")[0], "%Y-%m-%d"),
+        (text, "%m-%d-%Y"),
+    ):
+        try:
+            return datetime.strptime(candidate, fmt).date()
+        except ValueError:
+            pass
+    raise Cf2ApiError(f"Unsupported date value: {value!r}")
+
+
+def _mm_dd_yyyy(value):
+    return _date_from_value(value).strftime("%m-%d-%Y")
+
+
+def validate_claim_eligibility(claim_id, transmittal_id, admission_date, discharge_date):
+    """Validate claim eligibility without using the Beacon UI.
+
+    Confirmed from the 2026-08-31 HAR capture, the Validate Eligibility
+    button performs exactly these backend writes for a successful/eligible
+    claim:
+
+      1. GET  /api/PHICCF1/GetPHICCF1Summary?id={claim_id}
+      2. POST {ECLAIMS_API_BASE}/IsClaimEligible
+      3. PUT  /api/PHICClaim/EditPHICClaimEligibilityStatus
+
+    There is no intermediate API call supplying the remaining-days / NHTS /
+    3-over-6 / 9-over-12 fields.  The captured browser request synthesizes
+    them client-side for the successful PBEF path: remainingDays=45,
+    eligibleAsOf=one calendar year before admission, and the three flags
+    are "NO".  This function intentionally implements only that confirmed
+    successful (isok == YES) path; an ineligible/other response raises so we
+    do not invent an unobserved Beacon payload.
+    """
+    cf1 = get_cf1_summary(claim_id)
+    if not isinstance(cf1, dict) or not cf1:
+        raise Cf2ApiError(
+            f"GetPHICCF1Summary returned no usable data for claimId={claim_id}."
+        )
+
+    # The UI does not show Validate Eligibility once a result is already
+    # stored. Mirror that behavior and avoid generating a duplicate PBEF.
+    if str(cf1.get("eligibilityIsOk") or "").strip():
+        return {
+            "skipped": True,
+            "reason": "already_validated",
+            "cf1": cf1,
+        }
+
+    identity = get_hospital_identity(transmittal_id)
+    admission = _date_from_value(admission_date)
+    discharge = _date_from_value(discharge_date)
+
+    eligibility_request = {
+        "hospitalCode": identity["hospitalCode"],
+        "isForOPDHemodialysisClaim": "0",
+        "memberPIN": cf1.get("memberPin"),
+        "patientPIN": cf1.get("patientPin"),
+        "memberBasicInformation": {
+            "lastname": cf1.get("memberLastname") or "",
+            "firstname": cf1.get("memberFirstname") or "",
+            "middlename": cf1.get("memberMiddlename") or "",
+            "maidenname": "",
+            "sex": cf1.get("memberGender") or "",
+            "dateOfBirth": _mm_dd_yyyy(cf1.get("memberBirthday")),
+            "suffix": cf1.get("memberSuffix"),
+        },
+        "patientIs": cf1.get("patientIsCode"),
+        "admissiondate": admission.strftime("%m-%d-%Y"),
+        "patientBasicInformation": {
+            "lastname": cf1.get("patientLastname") or "",
+            "firstname": cf1.get("patientFirstname") or "",
+            "middlename": cf1.get("patientMiddlename") or "",
+            "dateofBirth": _mm_dd_yyyy(cf1.get("patientBirthday")),
+            "maidenname": "",
+            "sex": cf1.get("patientGender") or "",
+            "suffix": cf1.get("patientSuffix"),
+        },
+        "membershipType": cf1.get("memberTypeCode"),
+        "pen": cf1.get("memberPEN"),
+        "isFinal": 0,
+        "phicIdentity": identity,
+    }
+
+    eligibility_result = _post(
+        "/IsClaimEligible",
+        json_body=eligibility_request,
+        base=ECLAIMS_API_BASE,
+    )
+    if not isinstance(eligibility_result, dict):
+        raise Cf2ApiError("IsClaimEligible returned an unexpected response shape.")
+
+    is_ok = str(
+        eligibility_result.get("isok")
+        or eligibility_result.get("isOk")
+        or ""
+    ).strip().upper()
+    if is_ok != "YES":
+        raise Cf2ApiError(
+            "IsClaimEligible did not return the confirmed eligible path: "
+            f"isok={is_ok!r}, message={eligibility_result.get('message')!r}. "
+            "No eligibility status was written because the ineligible PUT "
+            "payload has not yet been captured."
+        )
+
+    try:
+        eligible_as_of_date = admission.replace(year=admission.year - 1)
+    except ValueError:
+        # Feb 29 -> Feb 28 in the previous non-leap year.
+        eligible_as_of_date = admission.replace(
+            year=admission.year - 1, month=2, day=28
+        )
+
+    status_payload = {
+        "Id": str(claim_id),
+        "eligibilityIsOk": is_ok,
+        "eligibilityTrackingNumber": eligibility_result.get("trackingNumber") or "",
+        "eligibilityRemainingDays": 45,
+        "eligibleAsOf": eligible_as_of_date.strftime("%m-%d-%Y"),
+        "eligibilityDocuments": [],
+        "eligibilityIsNHTS": "NO",
+        "eligibilityWith3Over6": "NO",
+        "eligibilityWith9Over12": "NO",
+        "admissionDate": to_utc_midnight_iso(admission),
+        "dischargeDate": to_utc_midnight_iso(discharge),
+    }
+
+    saved = _put(
+        "/api/PHICClaim/EditPHICClaimEligibilityStatus",
+        json_body=status_payload,
+    )
+    return {
+        "skipped": False,
+        "eligibility": eligibility_result,
+        "saved": saved,
+        "request": eligibility_request,
+        "status_payload": status_payload,
+    }
 
 
 def get_esoa_signatories(phic_claim_id):
