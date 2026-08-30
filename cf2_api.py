@@ -18,6 +18,7 @@ than breaking a patient outright.
 
 Covered here (confirmed via HAR, request AND response bodies inspected):
   - Claim eligibility validation: IsClaimEligible + EditPHICClaimEligibilityStatus
+  - Existing Draft lookup: transmittal search / Manage Claims / claim open
   - Discharge Diagnosis: read / ICD10 search / create / set-primary
   - Surgical Procedure: read / create
   - Case Rate ("1st Case Rate" tag): read / search / tag
@@ -42,7 +43,6 @@ or the capture was incomplete:
   - Draft creation / Add Claims / Member PIN validation
     (draft_automation.py's own flow - has its own set of endpoints we
     haven't dumped the request/response bodies for yet)
-  - Transmittal search / Manage Claims / Manage navigation
   - The main CF2 field save (EditPHICCF2) - the captured request body
     was cut off mid-JSON, so we don't have full certainty about every
     field Beacon expects back unchanged (newborn care, TB DOTS, animal
@@ -404,6 +404,163 @@ def get_client_id():
     return _client_id_cache
 
 
+# ---------------------------------------------------------------------
+# Existing draft lookup / claim resolution
+# ---------------------------------------------------------------------
+
+def _transmittal_search_date_window():
+    """Return the same rolling date window used by Beacon's Transmittals UI.
+
+    The captured Existing Draft HAR used local Philippine day boundaries:
+    dateFrom = local midnight 31 days before today, represented in UTC, and
+    dateTo = local 23:59:59.999 today, represented in UTC.
+    """
+    from datetime import timezone
+
+    ph_tz = timezone(timedelta(hours=8))
+    today = datetime.now(ph_tz).date()
+    start_local = datetime.combine(
+        today - timedelta(days=31), datetime.min.time(), tzinfo=ph_tz
+    )
+    end_local = datetime.combine(
+        today, datetime.max.time(), tzinfo=ph_tz
+    ).replace(microsecond=999000)
+    utc = timezone.utc
+    return (
+        start_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        end_local.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%S.999Z"),
+    )
+
+
+def search_existing_transmittal(transmittal_number, attempts=3):
+    """Find an existing transmittal exactly as the proven UI path did.
+
+    Confirmed by HAR:
+      GET /api/PHICTransmittal/GetAllPHICTransmittal
+
+    The original UI automation searched by ``data.transmittal``, accepted the
+    first matching row, retried up to three times when the client-rendered table
+    appeared empty/stale, and on the final attempt accepted the first row if one
+    existed even when text formatting prevented an exact string match. This API
+    version preserves that selection behavior while removing DOM interaction.
+    """
+    target = str(transmittal_number or "").strip()
+    if not target:
+        raise Cf2ApiError("Existing-draft mode requires a transmittal number.")
+
+    client_id = get_client_id()
+    date_from, date_to = _transmittal_search_date_window()
+
+    for attempt in range(1, attempts + 1):
+        response = _get(
+            "/api/PHICTransmittal/GetAllPHICTransmittal",
+            params={
+                "clientId": client_id,
+                "dateFrom": date_from,
+                "dateTo": date_to,
+                "itemStart": 0,
+                "itemEnd": 30,
+                "que": target,
+                "transmittalPackageType": 7,
+            },
+        ) or {}
+        rows = response.get("transmittalList") or []
+
+        if rows:
+            first = rows[0]
+            if target in str(first.get("transmittalNumber") or ""):
+                return first
+            if attempt == attempts:
+                # Preserve the original UI behavior: on the final attempt,
+                # trust the first returned row even if formatting prevented
+                # the exact text check from succeeding.
+                return first
+
+    return None
+
+
+def get_claims_for_transmittal(transmittal_id):
+    """Return the claims shown by Beacon's Manage Claims page."""
+    return _get(
+        "/api/PHICClaim/GetAllPHICClaimByPHICTransmittalId",
+        params={"transmittalId": transmittal_id},
+    ) or []
+
+
+def check_transmittal_for_facility(transmittal_id, client_id=None):
+    """Mirror Beacon's facility check performed before opening a claim."""
+    if client_id is None:
+        client_id = get_client_id()
+    return _get(
+        "/api/PHICTransmittal/CheckIfTransmittalIsForFacility",
+        params={"TransmittalId": transmittal_id, "ClientId": client_id},
+    )
+
+
+def get_phic_claim(claim_id):
+    """Fetch the claim opened by the Manage action in Beacon."""
+    return _get(
+        "/api/PHICClaim/GetPHICClaim",
+        params={"id": claim_id},
+    )
+
+
+def resolve_existing_draft(transmittal_number, attempts=3):
+    """Resolve the same transmittal + first claim selected by the UI flow.
+
+    This is a direct API replacement for:
+      _open_and_search_transmittal -> _open_manage_claims -> _open_patient
+
+    It intentionally preserves the old selection rule: one transmittal maps to
+    one patient in this workflow, so the first claim returned by Manage Claims
+    is the claim that gets processed.
+    """
+    transmittal = search_existing_transmittal(transmittal_number, attempts=attempts)
+    if transmittal is None:
+        return None
+
+    transmittal_id = transmittal.get("id")
+    if not transmittal_id:
+        raise Cf2ApiError(
+            f"Transmittal {transmittal_number!r} did not contain an id."
+        )
+
+    claims = get_claims_for_transmittal(transmittal_id)
+    if not claims:
+        raise Cf2ApiError(
+            f"Transmittal {transmittal_number!r} contains no PHIC claims."
+        )
+
+    claim = claims[0]
+    claim_id = claim.get("id")
+    if not claim_id:
+        raise Cf2ApiError(
+            f"First claim for transmittal {transmittal_number!r} has no id."
+        )
+
+    facility_ok = check_transmittal_for_facility(transmittal_id)
+    if facility_ok is not True:
+        raise Cf2ApiError(
+            f"Transmittal {transmittal_number!r} is not available for the logged-in facility."
+        )
+
+    # Beacon performs this GET when the user clicks Manage. Keep the call so
+    # the API migration follows the same backend access path and validates that
+    # the selected claim is still readable before CF2 processing begins.
+    opened_claim = get_phic_claim(claim_id)
+    if not opened_claim or int(opened_claim.get("id") or 0) != int(claim_id):
+        raise Cf2ApiError(
+            f"Could not open PHIC claim {claim_id} for transmittal {transmittal_number!r}."
+        )
+
+    return {
+        "transmittal_id": int(transmittal_id),
+        "claim_id": int(claim_id),
+        "transmittal": transmittal,
+        "claim": claim,
+    }
+
+
 def get_hospital_identity(transmittal_id):
     """
     Returns {"hospitalCode": ..., "accreditationNo": ...} for the
@@ -668,61 +825,53 @@ def search_case_rates(rvs_code, target_date_str, hospital_identity):
     )
 
 
-def tag_first_case(cf2_id, surgical_procedure, case_rate, session_date):
-    """
-    Tags a Surgical Procedure as 1st Case Rate AND persists its (single)
-    session date in the same call - confirmed via HAR entry 64
-    (NewPHICAllCaseRate). This module only ever creates a Surgical
-    Procedure with 1 session (numberOfSessions passed to
-    new_surgical_procedure), matching current behavior, so there's
-    exactly one session dict to update here.
+def tag_first_case(cf2_id, surgical_procedure, case_rate, session_dates):
+    """Tag a Surgical Procedure as 1st Case Rate and submit every session date.
 
-    `surgical_procedure` is the dict returned by new_surgical_procedure()
-    above; `case_rate` is caserates[0] from search_case_rates()'s
-    response. `session_date` is a date/datetime or date string.
+    Confirmed by a multi-session HAR capture: Beacon sends ONE
+    NewPHICAllCaseRate request containing all session objects. Each session
+    keeps its identity/clinical fields, drops the 7 audit fields, and carries
+    sessionDate as MM-DD-YYYY. Multi-session support changes only the session
+    list/date handling. Case-rate amount and fee logic remain exactly the same
+    as the previously working single-session implementation.
     """
     amount = case_rate["amount"][0]
 
-    # sessionDate is a plain "MM-DD-YYYY" string — confirmed directly
-    # via the original HAR capture: {"sessionDate":"07-01-2026", ...}.
-    # This is NOT the same serialization as the CF2 record's
-    # admission/dischargeDateTime fields (which really are UTC-midnight
-    # ISO timestamps) — an earlier version of this function incorrectly
-    # ran session_date through to_utc_midnight_iso() here, producing a
-    # value like "2026-06-30T16:00:00.000Z" that Beacon silently
-    # accepted (no validation error) but couldn't actually use,
-    # resulting in a blank date on screen and "INVALID DATE" on the
-    # generated CF2 PDF.
-    if hasattr(session_date, "strftime"):
-        session_date_str = session_date.strftime("%m-%d-%Y")
-    elif isinstance(session_date, str) and "T" not in session_date:
-        try:
-            d = datetime.strptime(session_date, "%m-%d-%Y")
-        except ValueError:
-            d = datetime.strptime(session_date, "%m/%d/%Y")
-        session_date_str = d.strftime("%m-%d-%Y")
-    else:
-        session_date_str = str(session_date)
+    if not isinstance(session_dates, (list, tuple)):
+        session_dates = [session_dates]
+    if not session_dates:
+        raise Cf2ApiError("tag_first_case requires at least one session date.")
 
-    # In the confirmed working payload, sessions[0] has exactly 8 keys:
-    # the 7 audit/tracking keys from NewPHICSurgicalProcedure's response
-    # (version, createdById, createdBy, dateCreated, updatedById, updatedBy,
-    # dateUpdated) must be excluded, otherwise Beacon's backend silently
-    # ignores the session update and leaves sessionDate null.
-    session = {
-        k: v
-        for k, v in surgical_procedure["sessions"][0].items()
-        if k not in (
-            "version",
-            "createdById",
-            "createdBy",
-            "dateCreated",
-            "updatedById",
-            "updatedBy",
-            "dateUpdated",
+    source_sessions = surgical_procedure.get("sessions") or []
+    if len(source_sessions) < len(session_dates):
+        raise Cf2ApiError(
+            f"Surgical Procedure has {len(source_sessions)} session object(s), "
+            f"but {len(session_dates)} session date(s) were supplied."
         )
-    }
-    session["sessionDate"] = session_date_str
+
+    sessions = []
+    for index, session_date in enumerate(session_dates):
+        if hasattr(session_date, "strftime"):
+            date_str = session_date.strftime("%m-%d-%Y")
+        elif isinstance(session_date, str) and "T" not in session_date:
+            try:
+                d = datetime.strptime(session_date, "%m-%d-%Y")
+            except ValueError:
+                d = datetime.strptime(session_date, "%m/%d/%Y")
+            date_str = d.strftime("%m-%d-%Y")
+        else:
+            date_str = str(session_date)
+
+        session = {
+            k: v
+            for k, v in source_sessions[index].items()
+            if k not in (
+                "version", "createdById", "createdBy", "dateCreated",
+                "updatedById", "updatedBy", "dateUpdated",
+            )
+        }
+        session["sessionDate"] = date_str
+        sessions.append(session)
 
     payload = {
         "icD10Code": surgical_procedure["icD10Code"],
@@ -732,7 +881,7 @@ def tag_first_case(cf2_id, surgical_procedure, case_rate, session_date):
         "rvsCode": surgical_procedure["rvsCode"],
         "repetitive": surgical_procedure["repetitive"],
         "numberOfSites": surgical_procedure.get("numberOfSites", 0),
-        "sessions": [session],
+        "sessions": sessions,
         "id": surgical_procedure["id"],
         "version": surgical_procedure.get("version", 0),
         "createdById": surgical_procedure.get("createdById"),
@@ -754,9 +903,7 @@ def tag_first_case(cf2_id, surgical_procedure, case_rate, session_date):
         "hospitalFee": amount["pPrimaryHCIFee"],
         "profFee": amount["pPrimaryProfFee"],
     }
-
     return _post("/api/PHICAllCaseRate/NewPHICAllCaseRate", json_body=payload)
-
 
 def add_surgical_procedure_and_tag_first_case(
     cf2_id,
@@ -788,7 +935,7 @@ def add_surgical_procedure_and_tag_first_case(
             f"{procedure['rvsCode']} / {session_date_str}."
         )
 
-    return tag_first_case(cf2_id, procedure, caserates[0], session_date_str)
+    return tag_first_case(cf2_id, procedure, caserates[0], [session_date_str])
 
 
 # ---------------------------------------------------------------------

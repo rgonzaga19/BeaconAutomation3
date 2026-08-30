@@ -111,6 +111,11 @@ class CF2Automation:
         # the UI fallback cleanly. IMPORTANT: for single-session claims,
         # EditPHICCF2 must first persist and verify the session date.
         self._case_rate_tagged_via_api = False
+        # API-resolved IDs for the patient currently being processed.
+        # Existing-draft mode sets these without opening any Beacon page;
+        # new-draft mode still obtains them from the claim-details URL created
+        # by draft_automation until that separate flow is migrated.
+        self._current_ids = None
 
     # ------------------------------------------------------------------
     # Public entry point — never lets a single patient crash the batch
@@ -212,11 +217,16 @@ class CF2Automation:
         return str(value).strip() if value is not None else ""
 
     def _get_ids(self, page):
-        """Wraps cf2_api.extract_ids_from_url(page.url) - shared by every
-        API-migrated step below. Raises cf2_api.Cf2ApiError if the URL
-        doesn't match the expected pattern, which callers treat the
-        same as any other API-path failure: fall back to UI automation."""
-        return cf2_api.extract_ids_from_url(page.url)
+        """Return the IDs for the patient currently being processed.
+
+        Existing-draft mode resolves these directly through the API. New-draft
+        mode still gets them from draft_automation's resulting claim-details URL.
+        The first successful resolution is cached for the rest of this patient.
+        """
+        if self._current_ids is not None:
+            return self._current_ids
+        self._current_ids = cf2_api.extract_ids_from_url(page.url)
+        return self._current_ids
 
     # ------------------------------------------------------------------
     # Step runner — every UI action goes through this
@@ -245,18 +255,18 @@ class CF2Automation:
     # ------------------------------------------------------------------
     def fill_cf2(self, data):
         page = self.page
+        # Never carry a previous patient's IDs into the next row.
+        self._current_ids = None
 
         if self.mode == "existing_draft":
             self._locate_existing_draft(page, data)
         else:
             self._create_draft(page, data)
 
-        # Either path leaves the browser sitting directly on the PHIC
-        # Claims Details page itself (CF1/CF2 tabs, admission/discharge
-        # dates pre-filled) — confirmed via a live test for new_draft,
-        # and _open_patient()'s "Manage" click lands on the same page
-        # for existing_draft. Everything below is identical regardless
-        # of which path got here.
+        # new_draft still leaves the browser on PHIC Claim Details through
+        # draft_automation. existing_draft now resolves transmittal/claim IDs
+        # directly through APIs and does not navigate the browser at all.
+        # Everything below uses _get_ids(), so both paths share the same CF2 logic.
 
         self._step(
             "Validating eligibility via API...",
@@ -304,16 +314,14 @@ class CF2Automation:
         # For a single-session claim we now use the same full EditPHICCF2 payload
         # that Beacon accepts when the date is entered manually. NewPHICAllCaseRate
         # creates the case-rate record but does NOT persist surgicalProcedure.sessions[].sessionDate.
-        if data.total_sessions == 1:
-            if not self._fill_and_save_cf2(page, data, persist_session_dates=True):
-                raise RuntimeError(
-                    "Could not persist Session 1 date through EditPHICCF2 API; "
-                    "refusing to tag 1st Case Rate while backend sessionDate is unknown."
-                )
-        else:
-            # Multi-session API payload shape has not been independently confirmed;
-            # retain the existing UI entry path for those cases.
-            self._fill_session_dates(page, data)
+        # Multi-session shape is now confirmed by HAR: EditPHICCF2 carries all
+        # surgicalProcedure.sessions[] dates before a single NewPHICAllCaseRate
+        # request tags the repetitive procedure. Use the same API path for 1..N sessions.
+        if not self._fill_and_save_cf2(page, data, persist_session_dates=True):
+            raise RuntimeError(
+                "Could not persist session dates through EditPHICCF2 API; "
+                "refusing to tag 1st Case Rate while backend session dates are unknown."
+            )
 
         def _tag_first_case_api_or_ui():
             ids = self._get_ids(page)
@@ -321,16 +329,16 @@ class CF2Automation:
                 # Never allow UI tagging unless the backend already contains the
                 # expected session date. This prevents a 1st Case Rate tag with a
                 # NULL sessionDate when the API path is unavailable.
-                if data.total_sessions == 1:
-                    procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
-                    sessions = (procedures[0].get("sessions") or []) if procedures else []
-                    actual = sessions[0].get("sessionDate") if sessions else None
-                    expected = data.session_dates[0].strftime("%m-%d-%Y")
-                    if self._normalize_backend_session_date(actual) != expected:
-                        raise RuntimeError(
-                            f"Refusing 1st Case Rate tagging: backend sessionDate is "
-                            f"{actual!r}, expected {expected!r}."
-                        )
+                procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
+                sessions = (procedures[0].get("sessions") or []) if procedures else []
+                expected = [d.strftime("%m-%d-%Y") for d in data.session_dates]
+                actual = [s.get("sessionDate") for s in sessions[:len(expected)]]
+                normalized = [self._normalize_backend_session_date(v) for v in actual]
+                if normalized != expected:
+                    raise RuntimeError(
+                        f"Refusing UI 1st Case Rate fallback: backend session dates are "
+                        f"{actual!r}, expected {expected!r}."
+                    )
                 self._tag_first_case(page)
 
         self._step(
@@ -404,21 +412,34 @@ class CF2Automation:
     # patient, so grabbing the first (only) row at each step is correct.
     # ------------------------------------------------------------------
     def _locate_existing_draft(self, page, data):
+        """Resolve an existing draft through Beacon APIs only.
+
+        Selection logic is intentionally unchanged: search using
+        ``data.transmittal`` and process the first claim in that transmittal.
+        The old UI helper methods remain below temporarily for the cleanup pass,
+        but this normal path no longer calls them.
+        """
         def _run():
-            row = self._open_and_search_transmittal(page, data)
-            if row is None:
+            resolved = cf2_api.resolve_existing_draft(data.transmittal, attempts=3)
+            if resolved is None:
                 raise TransmittalNotFoundError(
                     f"Transmittal not found: {data.transmittal}"
                 )
-            self._open_manage_claims(page, row)
-            self._open_patient(page)
+            self._current_ids = {
+                "transmittal_id": resolved["transmittal_id"],
+                "claim_id": resolved["claim_id"],
+            }
 
         self._step(
-            f"Locating existing draft (Transmittal: {data.transmittal})...",
+            f"Locating existing draft via API (Transmittal: {data.transmittal})...",
             _run,
             critical=True,
         )
-        print(f"Located existing draft. Transmittal number: {data.transmittal}")
+        print(
+            f"Located existing draft via API. Transmittal number: {data.transmittal}; "
+            f"transmittalId={self._current_ids['transmittal_id']}, "
+            f"claimId={self._current_ids['claim_id']}"
+        )
 
     def _open_and_search_transmittal(self, page, data, attempts=3):
         """Searches the Transmittals list for data.transmittal. Returns
@@ -1071,12 +1092,9 @@ class CF2Automation:
         # persisted separately through the full EditPHICCF2 payload before
         # NewPHICAllCaseRate is called for 1st Case Rate tagging.
         #
-        # Restricted to data.total_sessions == 1: the only case we have
-        # a captured, confirmed example for. We don't know whether
-        # NewPHICAllCaseRate accepts multiple sessions with different
-        # dates in one call or needs one call per session, so anything
-        # with more than 1 session falls straight through to the
-        # existing UI automation rather than guessing.
+        # Multi-session behavior is confirmed by HAR: procedure creation
+        # creates the requested number of session rows, and one later
+        # NewPHICAllCaseRate request carries all dated sessions.
         try:
             ids = self._get_ids(page)
             existing_procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
@@ -1327,91 +1345,75 @@ class CF2Automation:
             )
 
     def _tag_first_case_via_api(self, page, ids, data):
+        """Tag the hemodialysis Surgical Procedure as 1st Case Rate via API.
+
+        Multi-session behavior is confirmed by HAR: one NewPHICAllCaseRate
+        request contains every session and its MM-DD-YYYY date.
         """
-        Wires up cf2_api.tag_first_case() - it already existed and was
-        fully working, just never called from here. Restricted to
-        data.total_sessions == 1, matching the same restriction
-        _add_surgical_procedure's API path already documents (the only
-        case we have a confirmed example for).
-
-        IMPORTANT ORDERING: must only be called AFTER session dates
-        have actually been entered (_fill_session_dates) - confirmed
-        in Beacon itself that tagging as 1st Case Rate disables the
-        session date field and no date gets persisted if tagging
-        happens first. So this always re-fetches the current surgical
-        procedure record fresh (rather than being handed one from
-        procedure-creation time), to make sure it reflects whatever
-        session date state actually exists on the backend right now.
-
-        Self-contained: catches its own exceptions and never raises,
-        so a tagging failure is reported as its own warning rather than
-        bubbling up as some other step's failure.
-        """
-        if data.total_sessions != 1:
-            print(
-                "More than 1 session - 1st Case Rate tagging via API "
-                "not yet confirmed for this case, leaving it to the "
-                "UI steps below."
-            )
-            return False
-
         try:
             if cf2_api.get_case_rates(ids["claim_id"]):
-                print(
-                    "Surgical Procedure already tagged as 1st Case Rate "
-                    "(via API) - skipping."
-                )
+                print("Surgical Procedure already tagged as 1st Case Rate (via API) - skipping.")
                 self._case_rate_tagged_via_api = True
                 return True
 
             procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
             if not procedures:
-                print(
-                    "No Surgical Procedure found - can't tag via API, "
-                    "leaving it to the UI steps below."
-                )
+                print("No Surgical Procedure found - can't tag via API.")
                 return False
             surgical_procedure = procedures[0]
+            sessions = surgical_procedure.get("sessions") or []
+            if len(sessions) < len(data.session_dates):
+                raise RuntimeError(
+                    f"Backend has {len(sessions)} session row(s), expected at least "
+                    f"{len(data.session_dates)}."
+                )
+
+            expected_dates = [d.strftime("%m-%d-%Y") for d in data.session_dates]
+            actual_before = [s.get("sessionDate") for s in sessions[:len(expected_dates)]]
+            normalized_before = [self._normalize_backend_session_date(v) for v in actual_before]
+            if normalized_before != expected_dates:
+                raise RuntimeError(
+                    f"Refusing 1st Case Rate tagging: backend session dates are "
+                    f"{actual_before!r}, expected {expected_dates!r}."
+                )
 
             hospital_identity = cf2_api.get_hospital_identity(ids["transmittal_id"])
-            session_date = data.session_dates[0]
-            target_date_str = session_date.strftime("%m-%d-%Y")
-
+            target_date_str = data.session_dates[0].strftime("%m-%d-%Y")
             case_rate_response = cf2_api.search_case_rates(
                 "90935", target_date_str, hospital_identity
             )
-            case_rate = case_rate_response["caserates"][0]
+            caserates = case_rate_response.get("caserates") or []
+            if not caserates:
+                raise cf2_api.Cf2ApiError(
+                    f"SearchCaseRates returned no case rates for 90935 / {target_date_str}."
+                )
 
-            # Diagnostic: the Playwright input check only proves the date is
-            # present in the browser. Read Beacon's backend immediately
-            # before tagging to see whether the date was actually persisted.
             self._diagnose_session_date_backend(page, data, "BEFORE 1ST CASE TAG")
-
             cf2_api.tag_first_case(
-                ids["claim_id"], surgical_procedure, case_rate, session_date
+                ids["claim_id"], surgical_procedure, caserates[0], data.session_dates
             )
-            print("Surgical Procedure tagged as 1st Case Rate (via API).")
+            print(
+                f"Surgical Procedure tagged as 1st Case Rate via API "
+                f"with {len(data.session_dates)} session(s)."
+            )
 
-            # Diagnostic: NewPHICAllCaseRate should NOT be responsible for the
-            # session date. Verify that the date persisted by EditPHICCF2 remains
-            # intact after tagging. If it disappears, abort instead of falling
-            # back to UI and creating a tagged procedure with a NULL date.
             procedures_after = cf2_api.get_surgical_procedures(ids["claim_id"])
             sessions_after = (procedures_after[0].get("sessions") or []) if procedures_after else []
-            actual_after = sessions_after[0].get("sessionDate") if sessions_after else None
-            expected_after = data.session_dates[0].strftime("%m-%d-%Y")
+            actual_after = [
+                s.get("sessionDate") for s in sessions_after[:len(expected_dates)]
+            ]
+            normalized_after = [self._normalize_backend_session_date(v) for v in actual_after]
             self._diagnose_session_date_backend(page, data, "AFTER 1ST CASE TAG")
-            if self._normalize_backend_session_date(actual_after) != expected_after:
+            if normalized_after != expected_dates:
                 raise RuntimeError(
-                    f"1st Case Rate tagging changed/lost sessionDate: "
-                    f"expected {expected_after!r}, got {actual_after!r}."
+                    f"1st Case Rate tagging changed/lost session dates: "
+                    f"expected {expected_dates!r}, got {actual_after!r}."
                 )
+
             self._case_rate_tagged_via_api = True
             return True
         except Exception as e:
-            print(
-                f"WARNING: API path for 1st Case Rate tagging failed ({e})."
-            )
+            print(f"WARNING: API path for 1st Case Rate tagging failed ({e}).")
             return False
 
     def _fill_claim_form_two_via_api(self, claim_id, data):
