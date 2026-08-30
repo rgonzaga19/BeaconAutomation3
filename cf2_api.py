@@ -529,18 +529,26 @@ def tag_first_case(cf2_id, surgical_procedure, case_rate, session_date):
     """
     amount = case_rate["amount"][0]
 
-    # Convert session_date to UTC midnight ISO string matching Beacon's
-    # frontend serialization for DateTime fields
+    # sessionDate is a plain "MM-DD-YYYY" string — confirmed directly
+    # via the original HAR capture: {"sessionDate":"07-01-2026", ...}.
+    # This is NOT the same serialization as the CF2 record's
+    # admission/dischargeDateTime fields (which really are UTC-midnight
+    # ISO timestamps) — an earlier version of this function incorrectly
+    # ran session_date through to_utc_midnight_iso() here, producing a
+    # value like "2026-06-30T16:00:00.000Z" that Beacon silently
+    # accepted (no validation error) but couldn't actually use,
+    # resulting in a blank date on screen and "INVALID DATE" on the
+    # generated CF2 PDF.
     if hasattr(session_date, "strftime"):
-        session_date_iso = to_utc_midnight_iso(session_date)
+        session_date_str = session_date.strftime("%m-%d-%Y")
     elif isinstance(session_date, str) and "T" not in session_date:
         try:
             d = datetime.strptime(session_date, "%m-%d-%Y")
         except ValueError:
             d = datetime.strptime(session_date, "%m/%d/%Y")
-        session_date_iso = to_utc_midnight_iso(d)
+        session_date_str = d.strftime("%m-%d-%Y")
     else:
-        session_date_iso = str(session_date)
+        session_date_str = str(session_date)
 
     # In the confirmed working payload, sessions[0] has exactly 8 keys:
     # the 7 audit/tracking keys from NewPHICSurgicalProcedure's response
@@ -560,7 +568,7 @@ def tag_first_case(cf2_id, surgical_procedure, case_rate, session_date):
             "dateUpdated",
         )
     }
-    session["sessionDate"] = session_date_iso
+    session["sessionDate"] = session_date_str
 
     payload = {
         "icD10Code": surgical_procedure["icD10Code"],

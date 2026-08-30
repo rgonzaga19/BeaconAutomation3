@@ -93,23 +93,24 @@ class CF2Automation:
         # Every processed patient gets one entry here:
         # {"transmittal": ..., "patient_name": ..., "status": "success"/"skipped"/"failed", "message": ...}
         self.results = []
-        # Set by the API-first path in _add_discharge_diagnosis /
-        # _add_surgical_procedure when they successfully handle
-        # everything (including "set as primary" / session dates /
-        # 1st case rate tag) via a direct API call — lets the
-        # corresponding later UI-fallback step(s) in fill_cf2() skip
-        # cleanly instead of wastefully retrying/timing out against
-        # work that's already done.
+        # Set by the API-first path in _add_discharge_diagnosis when it
+        # successfully handles everything (including "set as primary")
+        # via a direct API call — lets the corresponding later
+        # UI-fallback step in fill_cf2() skip cleanly instead of
+        # wastefully retrying/timing out against work that's already
+        # done.
         self._discharge_diagnosis_done_via_api = False
-        self._surgical_procedure_done_via_api = False
         # Set inside _add_surgical_procedure's API path the moment
-        # NewPHICSurgicalProcedure itself succeeds — independent of
-        # _surgical_procedure_done_via_api, which only gets set once
-        # the WHOLE thing (procedure + session date + case rate tag)
-        # succeeds. If session-date/case-rate tagging fails after the
-        # procedure was already created, this flag stops the UI
-        # fallback below from re-creating a duplicate procedure.
+        # NewPHICSurgicalProcedure itself succeeds. If a later step
+        # (session dates / case rate tagging) fails after the procedure
+        # was already created, this flag stops the UI fallback below
+        # from re-creating a duplicate procedure.
         self._surgical_procedure_created_via_api = False
+        # Set inside _tag_first_case_via_api the moment tagging itself
+        # succeeds via API - lets fill_cf2()'s "Tagging..." step skip
+        # the UI fallback cleanly. IMPORTANT: for single-session claims,
+        # EditPHICCF2 must first persist and verify the session date.
+        self._case_rate_tagged_via_api = False
 
     # ------------------------------------------------------------------
     # Public entry point — never lets a single patient crash the batch
@@ -312,13 +313,49 @@ class CF2Automation:
             critical=False,
         )
 
-        self._fill_session_dates(page, data)
+        # Session dates must be persisted to Beacon BEFORE 1st Case Rate tagging.
+        # For a single-session claim we now use the same full EditPHICCF2 payload
+        # that Beacon accepts when the date is entered manually. NewPHICAllCaseRate
+        # creates the case-rate record but does NOT persist surgicalProcedure.sessions[].sessionDate.
+        if data.total_sessions == 1:
+            if not self._fill_and_save_cf2(page, data, persist_session_dates=True):
+                raise RuntimeError(
+                    "Could not persist Session 1 date through EditPHICCF2 API; "
+                    "refusing to tag 1st Case Rate while backend sessionDate is unknown."
+                )
+        else:
+            # Multi-session API payload shape has not been independently confirmed;
+            # retain the existing UI entry path for those cases.
+            self._fill_session_dates(page, data)
+
+        def _tag_first_case_api_or_ui():
+            ids = self._get_ids(page)
+            if not self._tag_first_case_via_api(page, ids, data):
+                # Never allow UI tagging unless the backend already contains the
+                # expected session date. This prevents a 1st Case Rate tag with a
+                # NULL sessionDate when the API path is unavailable.
+                if data.total_sessions == 1:
+                    procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
+                    sessions = (procedures[0].get("sessions") or []) if procedures else []
+                    actual = sessions[0].get("sessionDate") if sessions else None
+                    expected = data.session_dates[0].strftime("%m-%d-%Y")
+                    if self._normalize_backend_session_date(actual) != expected:
+                        raise RuntimeError(
+                            f"Refusing 1st Case Rate tagging: backend sessionDate is "
+                            f"{actual!r}, expected {expected!r}."
+                        )
+                self._tag_first_case(page)
 
         self._step(
             "Tagging Surgical Procedure as 1st Case Rate...",
-            lambda: self._tag_first_case(page),
-            critical=False,
+            _tag_first_case_api_or_ui,
+            critical=True,
         )
+
+        # The API path already emits a before/after diagnostic. If the UI
+        # fallback was used, emit the equivalent post-tag backend check here.
+        if not self._case_rate_tagged_via_api:
+            self._diagnose_session_date_backend(page, data, "AFTER 1ST CASE TAG (UI)")
 
         if not self._fill_and_save_cf2(page, data):
             self._fill_referral_and_accommodation(page)
@@ -326,6 +363,12 @@ class CF2Automation:
             self._fill_benefits_and_fees(page, data)
             self._fill_access_patient_records_date(page, data)
             self._save_cf2(page)
+
+        # Final diagnostic: check again after the CF2 save path. If the date
+        # existed after tagging but is NULL here, the CF2 save path is the
+        # point where it was lost.
+        self._diagnose_session_date_backend(page, data, "AFTER CF2 SAVE")
+
         self._fill_statement_of_account(page, data)
 
         print("SUCCESS: CF2 completed for this patient.")
@@ -570,7 +613,7 @@ class CF2Automation:
         page.wait_for_timeout(500)
         print("Selected Patient Type: O - Outpatient.")
 
-    def _fill_and_save_cf2(self, page, data):
+    def _fill_and_save_cf2(self, page, data, persist_session_dates=False):
         """
         Combines what were 5 separate UI steps
         (_fill_referral_and_accommodation, _fill_disposition_and_diagnosis,
@@ -674,8 +717,67 @@ class CF2Automation:
                 cf2_api.build_surgical_procedures_for_cf2(ids["claim_id"])
             )
 
+            # When requested, persist session dates through the full EditPHICCF2
+            # payload. This mirrors Beacon's successful manual request: the
+            # session object keeps its id/session metadata and only sessionDate
+            # is changed. Do NOT try to persist this through NewPHICAllCaseRate;
+            # that endpoint returns a case-rate record and does not return or
+            # reliably store sessions[].sessionDate.
+            if persist_session_dates and data.session_dates:
+                procedures = cf2_record.get("surgicalProcedures") or []
+                if not procedures:
+                    raise RuntimeError("EditPHICCF2 payload contains no surgicalProcedures.")
+
+                if len(procedures) < 1:
+                    raise RuntimeError("No Surgical Procedure available for session-date persistence.")
+
+                for proc_index, procedure in enumerate(procedures):
+                    sessions = procedure.get("sessions") or []
+                    if not sessions:
+                        raise RuntimeError(
+                            f"Surgical Procedure #{proc_index + 1} has no session objects "
+                            "in the EditPHICCF2 payload; refusing to invent session IDs."
+                        )
+                    for session_index, session in enumerate(sessions):
+                        if session_index >= len(data.session_dates):
+                            break
+                        session["sessionDate"] = data.session_dates[session_index].strftime("%m-%d-%Y")
+                        print(
+                            f"  API Session {session_index + 1}: "
+                            f"sessionDate={session['sessionDate']} "
+                            f"(session id={session.get('id')})"
+                        )
+
+                print("Saving session date(s) through EditPHICCF2 API...")
+
             cf2_api.edit_cf2(cf2_record)
             print("CF2 form fields filled and saved (via API).")
+
+            if persist_session_dates and data.session_dates:
+                # Verify the value returned by Beacon, not merely the request
+                # body. A successful HTTP response alone is insufficient.
+                verify_procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
+                expected_dates = [d.strftime("%m-%d-%Y") for d in data.session_dates]
+                actual_dates = []
+                for procedure in verify_procedures or []:
+                    for session in (procedure.get("sessions") or []):
+                        actual_dates.append(session.get("sessionDate"))
+
+                actual_dates = actual_dates[:len(expected_dates)]
+                print("===== SESSION DATE API VERIFICATION (EditPHICCF2) =====")
+                for idx, expected in enumerate(expected_dates):
+                    actual = actual_dates[idx] if idx < len(actual_dates) else None
+                    print(
+                        f"  Session {idx + 1}: expected={expected!r}, "
+                        f"backend={actual!r}"
+                    )
+                if [self._normalize_backend_session_date(v) for v in actual_dates] != expected_dates:
+                    raise RuntimeError(
+                        f"EditPHICCF2 returned session dates {actual_dates!r}; "
+                        f"expected {expected_dates!r}."
+                    )
+                print("RESULT: SESSION DATE(S) PERSISTED AND VERIFIED BY BACKEND API.")
+                print("========================================================")
 
             # Safe to reload here (unlike the earlier Discharge
             # Diagnosis / Surgical Procedure / Doctor steps): this is
@@ -964,12 +1066,9 @@ class CF2Automation:
         # Confirmed via HAR: GetPHICSurgicalProcedure (empty = guard
         # check), NewPHICSurgicalProcedure, GetPHICAllCaseRates (empty
         # = not tagged yet), SearchCaseRates (eclaimsapi),
-        # NewPHICAllCaseRate. Combines what are 3 separate UI steps
-        # today (_add_surgical_procedure, _fill_session_dates,
-        # _tag_first_case) into one call, matching what's actually true
-        # on Beacon's backend: a session's date is ONLY persisted as
-        # part of the NewPHICAllCaseRate call, so these were never
-        # really independent steps.
+        # NewPHICSurgicalProcedure creates the procedure. Session dates are
+        # persisted separately through the full EditPHICCF2 payload before
+        # NewPHICAllCaseRate is called for 1st Case Rate tagging.
         #
         # Restricted to data.total_sessions == 1: the only case we have
         # a captured, confirmed example for. We don't know whether
@@ -1140,6 +1239,180 @@ class CF2Automation:
         self._step("Saving Surgical Procedure...", _save, critical=True)
         page.wait_for_timeout(1000)
 
+    @staticmethod
+    def _normalize_backend_session_date(value):
+        """Normalize Beacon sessionDate values for date-only comparison.
+
+        Beacon may return the same persisted date as either MM-DD-YYYY or
+        an ISO datetime such as 2026-07-01T00:00:00. Compare calendar dates,
+        not their raw string representations.
+        """
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        for fmt in ("%m-%d-%Y", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+            try:
+                return datetime.strptime(text, fmt).strftime("%m-%d-%Y")
+            except ValueError:
+                continue
+        # Handle ISO timestamps with timezone/offset by using only the date
+        # portion, which is how Beacon represents this field in its API.
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%m-%d-%Y")
+        except ValueError:
+            return text[:10]
+
+    def _diagnose_session_date_backend(self, page, data, stage):
+        """Best-effort diagnostic: print Beacon's persisted sessionDate.
+
+        This deliberately does not modify anything. It distinguishes a
+        Playwright-only DOM value from a value actually returned by
+        GetPHICSurgicalProcedure, and helps identify whether a later
+        operation wipes the session date.
+        """
+        try:
+            ids = self._get_ids(page)
+            procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
+            print(f"===== SESSION DATE BACKEND DIAGNOSTIC: {stage} =====")
+            if not procedures:
+                print("  Surgical Procedure records returned: 0")
+                print("  Session 1 backend sessionDate: <NO PROCEDURE>")
+                print("=======================================================")
+                return
+
+            for proc_index, procedure in enumerate(procedures, start=1):
+                sessions = procedure.get("sessions") or []
+                print(
+                    f"  Surgical Procedure #{proc_index}: "
+                    f"id={procedure.get('id')}, "
+                    f"numberOfSessions={procedure.get('numberOfSessions', len(sessions))}"
+                )
+                if not sessions:
+                    print("    sessions: []")
+                    continue
+                for session_index, session in enumerate(sessions, start=1):
+                    print(
+                        f"    Session {session_index} backend sessionDate: "
+                        f"{session.get('sessionDate')!r}"
+                    )
+
+            expected = (
+                data.session_dates[0].strftime("%m-%d-%Y")
+                if data.session_dates
+                else "<NONE>"
+            )
+            actual = None
+            first_sessions = procedures[0].get("sessions") or []
+            if first_sessions:
+                actual = first_sessions[0].get("sessionDate")
+
+            print(f"  Expected session 1 date from CF2 data: {expected!r}")
+            print(f"  Actual session 1 backend date: {actual!r}")
+            if self._normalize_backend_session_date(actual) == expected:
+                print("  DIAGNOSTIC RESULT: BACKEND DATE MATCHES EXPECTED DATE.")
+            elif actual:
+                print(
+                    "  DIAGNOSTIC RESULT: BACKEND HAS A DATE, BUT IT DOES NOT "
+                    "MATCH EXPECTED."
+                )
+            else:
+                print("  DIAGNOSTIC RESULT: BACKEND SESSION DATE IS EMPTY/NULL.")
+            print("=======================================================")
+        except Exception as e:
+            print(
+                f"WARNING: Session date backend diagnostic failed at {stage}: {e}"
+            )
+
+    def _tag_first_case_via_api(self, page, ids, data):
+        """
+        Wires up cf2_api.tag_first_case() - it already existed and was
+        fully working, just never called from here. Restricted to
+        data.total_sessions == 1, matching the same restriction
+        _add_surgical_procedure's API path already documents (the only
+        case we have a confirmed example for).
+
+        IMPORTANT ORDERING: must only be called AFTER session dates
+        have actually been entered (_fill_session_dates) - confirmed
+        in Beacon itself that tagging as 1st Case Rate disables the
+        session date field and no date gets persisted if tagging
+        happens first. So this always re-fetches the current surgical
+        procedure record fresh (rather than being handed one from
+        procedure-creation time), to make sure it reflects whatever
+        session date state actually exists on the backend right now.
+
+        Self-contained: catches its own exceptions and never raises,
+        so a tagging failure is reported as its own warning rather than
+        bubbling up as some other step's failure.
+        """
+        if data.total_sessions != 1:
+            print(
+                "More than 1 session - 1st Case Rate tagging via API "
+                "not yet confirmed for this case, leaving it to the "
+                "UI steps below."
+            )
+            return False
+
+        try:
+            if cf2_api.get_case_rates(ids["claim_id"]):
+                print(
+                    "Surgical Procedure already tagged as 1st Case Rate "
+                    "(via API) - skipping."
+                )
+                self._case_rate_tagged_via_api = True
+                return True
+
+            procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
+            if not procedures:
+                print(
+                    "No Surgical Procedure found - can't tag via API, "
+                    "leaving it to the UI steps below."
+                )
+                return False
+            surgical_procedure = procedures[0]
+
+            hospital_identity = cf2_api.get_hospital_identity(ids["transmittal_id"])
+            session_date = data.session_dates[0]
+            target_date_str = session_date.strftime("%m-%d-%Y")
+
+            case_rate_response = cf2_api.search_case_rates(
+                "90935", target_date_str, hospital_identity
+            )
+            case_rate = case_rate_response["caserates"][0]
+
+            # Diagnostic: the Playwright input check only proves the date is
+            # present in the browser. Read Beacon's backend immediately
+            # before tagging to see whether the date was actually persisted.
+            self._diagnose_session_date_backend(page, data, "BEFORE 1ST CASE TAG")
+
+            cf2_api.tag_first_case(
+                ids["claim_id"], surgical_procedure, case_rate, session_date
+            )
+            print("Surgical Procedure tagged as 1st Case Rate (via API).")
+
+            # Diagnostic: NewPHICAllCaseRate should NOT be responsible for the
+            # session date. Verify that the date persisted by EditPHICCF2 remains
+            # intact after tagging. If it disappears, abort instead of falling
+            # back to UI and creating a tagged procedure with a NULL date.
+            procedures_after = cf2_api.get_surgical_procedures(ids["claim_id"])
+            sessions_after = (procedures_after[0].get("sessions") or []) if procedures_after else []
+            actual_after = sessions_after[0].get("sessionDate") if sessions_after else None
+            expected_after = data.session_dates[0].strftime("%m-%d-%Y")
+            self._diagnose_session_date_backend(page, data, "AFTER 1ST CASE TAG")
+            if self._normalize_backend_session_date(actual_after) != expected_after:
+                raise RuntimeError(
+                    f"1st Case Rate tagging changed/lost sessionDate: "
+                    f"expected {expected_after!r}, got {actual_after!r}."
+                )
+            self._case_rate_tagged_via_api = True
+            return True
+        except Exception as e:
+            print(
+                f"WARNING: API path for 1st Case Rate tagging failed ({e})."
+            )
+            return False
+
     def _first_case_tag_present(self, page):
         """
         Returns True if the Surgical Procedure row is already tagged as
@@ -1239,15 +1512,45 @@ class CF2Automation:
                     print(f"  Session {i + 1} date already present: '{current_val}' - skipping.")
                     return
                 print(f"  Session {i + 1} date is empty - entering {date_str}...")
+                # Explicitly clear before typing — matches
+                # _fill_access_patient_records_date's proven approach.
+                # A freshly-reloaded, API-created session row's date
+                # input isn't necessarily in the same clean state as
+                # one built entirely through the UI; typing straight
+                # after a bare click (no clear) was observed to
+                # silently fail to register on this field.
                 date_input.click()
-                date_input.type(date_str, delay=100)
+                page.wait_for_timeout(300)
+                date_input.press("Control+A")
+                page.wait_for_timeout(100)
+                date_input.press("Delete")
+                page.wait_for_timeout(200)
+                date_input.type(date_str, delay=150)
                 date_input.press("Tab")
+                page.wait_for_timeout(300)
+
+                # Verify it actually landed instead of discovering a
+                # silent failure later via a generated PDF's "INVALID
+                # DATE". Non-fatal — just makes the next failure
+                # diagnosable from the log instead of a mystery.
+                after_val = date_input.input_value().strip()
+                if not after_val:
+                    print(
+                        f"  WARNING: Session {i + 1} date still empty "
+                        f"after typing {date_str} — it did not register."
+                    )
+                else:
+                    print(f"  Session {i + 1} date now shows: '{after_val}'.")
 
             # Non-critical: a single bad session date shouldn't sink the whole patient.
             self._step(f"  Session {i + 1}: {date_str}", _fill_one, critical=False)
             page.wait_for_timeout(300)
 
     def _tag_first_case(self, page):
+        if self._case_rate_tagged_via_api:
+            print("Already tagged as 1st Case Rate (via API) - skipping.")
+            return
+
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(500)
 
