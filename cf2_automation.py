@@ -320,11 +320,12 @@ class CF2Automation:
             critical=False,
         )
 
-        self._fill_referral_and_accommodation(page)
-        self._fill_disposition_and_diagnosis(page)
-        self._fill_benefits_and_fees(page, data)
-        self._fill_access_patient_records_date(page, data)
-        self._save_cf2(page)
+        if not self._fill_and_save_cf2(page, data):
+            self._fill_referral_and_accommodation(page)
+            self._fill_disposition_and_diagnosis(page)
+            self._fill_benefits_and_fees(page, data)
+            self._fill_access_patient_records_date(page, data)
+            self._save_cf2(page)
         self._fill_statement_of_account(page, data)
 
         print("SUCCESS: CF2 completed for this patient.")
@@ -568,6 +569,129 @@ class CF2Automation:
 
         page.wait_for_timeout(500)
         print("Selected Patient Type: O - Outpatient.")
+
+    def _fill_and_save_cf2(self, page, data):
+        """
+        Combines what were 5 separate UI steps
+        (_fill_referral_and_accommodation, _fill_disposition_and_diagnosis,
+        _fill_benefits_and_fees, _fill_access_patient_records_date,
+        _save_cf2) into a single GET -> merge -> PUT API call, confirmed
+        via a full (uncut) HAR capture of a real CF2 save.
+
+        Beacon expects the WHOLE CF2 record on every save, not a partial
+        patch — fields this migration doesn't know about (newborn care,
+        TB DOTS, animal bite, cataract, surgicalProcedures, audit
+        fields, etc.) live in this same record. So this always starts
+        from cf2_api.get_cf2()'s current state and only mutates the
+        specific fields these UI functions used to set, leaving
+        everything else exactly as the server returned it — the only
+        way to do this safely without risking silently wiping data
+        outside this migration's scope.
+
+        Returns True on success (API path handled everything, caller
+        should skip the UI fallback), False on any failure (caller
+        should run the UI fallback instead).
+        """
+        try:
+            ids = self._get_ids(page)
+            cf2_record = cf2_api.get_cf2(ids["claim_id"])
+            if not cf2_record:
+                raise cf2_api.Cf2ApiError(
+                    f"GetPHICCF2ById returned nothing for "
+                    f"claimId={ids['claim_id']}."
+                )
+
+            # _fill_referral_and_accommodation
+            cf2_record["isPatientReferred"] = "N"
+            cf2_record["accomodationTypeCode"] = "P"
+            cf2_record["accomodationTypeValue"] = "Private"
+
+            # _check_and_select_patient_type: the UI dropdown for this
+            # field is disabled for every hemodialysis claim this
+            # automation handles, so the UI never actively sets it - it's
+            # already "O - Outpatient" client-side and just isn't part of
+            # what the UI submits. GetPHICCF2ById doesn't return that
+            # default though, so echoing the record back leaves it null
+            # and EditPHICCF2 rejects the save with "PatientTypeCode
+            # field is required." Only fill it if it's actually missing -
+            # never override a value Beacon already has on file.
+            if not cf2_record.get("patientTypeCode"):
+                cf2_record["patientTypeCode"] = "O"
+                cf2_record["patientTypeValue"] = "Outpatient"
+
+            # Admission stays at local midnight; discharge moves to
+            # local noon (AM -> PM) — confirmed via HAR, see
+            # to_utc_midnight_iso / to_utc_noon_iso docstrings.
+            admission_iso = cf2_api.to_utc_midnight_iso(data.first_treatment)
+            discharge_iso = cf2_api.to_utc_noon_iso(data.last_treatment)
+            cf2_record["admissionDate"] = data.first_treatment.strftime("%m-%d-%Y")
+            cf2_record["admissionDateTime"] = admission_iso
+            cf2_record["admissionTime"] = admission_iso
+            cf2_record["dischargeDate"] = data.last_treatment.strftime("%m-%d-%Y")
+            cf2_record["dischargeDateTime"] = discharge_iso
+            cf2_record["dischargeTime"] = discharge_iso
+
+            # _fill_disposition_and_diagnosis
+            # match the current UI code's behavior exactly.
+            cf2_record["patientDispositionCode"] = "I"
+            cf2_record["patientDispositionValue"] = "Improved"
+            cf2_record["admissionDiagnosis"] = "CHRONIC KIDNEY DISEASE STAGE V"
+
+            # _fill_benefits_and_fees
+            fees = get_fees(data.total_sessions)
+            cf2_record["doesPatientHasEnoughBenefits"] = "N"
+            cf2_record["hospitalFeesActualCharges"] = f"{fees['hospital_actual']:.2f}"
+            cf2_record["hospitalFeesAmountAfterDiscount"] = f"{fees['hospital_discount']:.2f}"
+            cf2_record["hospitalFeesPhilHealthBenefit"] = f"{fees['hospital_discount']:.2f}"
+            cf2_record["professionalFeesActualCharges"] = f"{fees['prof_actual']:.2f}"
+            cf2_record["professionalFeesAmountAfterDiscount"] = f"{fees['prof_discount']:.2f}"
+            cf2_record["professionalFeesPhilHealthBenefit"] = f"{fees['prof_discount']:.2f}"
+            cf2_record["hospitalFeesDidPatientPay"] = "N"
+            cf2_record["hospitalFeesPatientHasHMO"] = "N"
+            cf2_record["hospitalFeesPatientHasOtherDeductions"] = "N"
+            cf2_record["professionalFeesDidPatientPay"] = "N"
+            cf2_record["professionalFeesPatientHasHMO"] = "N"
+            cf2_record["professionalFeesPatientHasOtherDeductions"] = "N"
+            cf2_record["purchasesWithDrugsMedSupplies"] = "N"
+            cf2_record["purchasesWithExaminations"] = "N"
+
+            print(
+                f"Fees for {data.total_sessions} sessions: "
+                f"hosp={fees['hospital_actual']}/{fees['hospital_discount']}, "
+                f"prof={fees['prof_actual']}/{fees['prof_discount']}"
+            )
+
+            # _fill_access_patient_records_date
+            cf2_record["aprDate"] = data.last_treatment.strftime("%m-%d-%Y")
+
+            # GetPHICCF2ById does NOT embed surgicalProcedures (confirmed
+            # via live debugging - see cf2_api.get_cf2()'s docstring),
+            # but EditPHICCF2 requires it to be present or it 500s
+            # unconditionally, regardless of every other field. Fetch it
+            # separately and reshape it to match a real captured working
+            # save payload before sending.
+            cf2_record["surgicalProcedures"] = (
+                cf2_api.build_surgical_procedures_for_cf2(ids["claim_id"])
+            )
+
+            cf2_api.edit_cf2(cf2_record)
+            print("CF2 form fields filled and saved (via API).")
+
+            # Safe to reload here (unlike the earlier Discharge
+            # Diagnosis / Surgical Procedure / Doctor steps): this is
+            # the LAST thing typed into the CF2 tab before moving on to
+            # Statement of Account, which reads its own data via
+            # separate API calls, not this page's DOM — so there's no
+            # unsaved input left to lose. Reloading just lets the
+            # visible browser catch up for visual reference.
+            page.reload(wait_until="networkidle")
+            return True
+        except Exception as e:
+            print(
+                f"WARNING: API path for CF2 field save failed ({e}) - "
+                f"falling back to UI automation."
+            )
+            return False
 
     def _fill_referral_and_accommodation(self, page):
         self._step(
@@ -1522,21 +1646,38 @@ class CF2Automation:
         print("CF2 saved.")
 
     def _fill_statement_of_account(self, page, data):
-        original_page = page  # keep a handle on the original tab so we can return to it
+        """Save the Statement of Account Signatories entirely through API.
 
-        # Get the member mobile directly from Beacon's CF1 API.
-        # This avoids scraping the visible Mobile field from the page.
+        The browser UI is no longer used to populate or save individual
+        Signatories fields. We first read the member mobile from CF1, then
+        read the existing eSOA signatory record to obtain its ``id``, build
+        the same payload Beacon sends from the Signatories SAVE button, POST
+        it to Update-signatories, and finally GET the record again to verify
+        the values persisted.
+        """
+        ids = self._get_ids(page)
+        claim_id = ids["claim_id"]
+
+        # _open_claim_form_2() below reassigns the `page` name (nonlocal)
+        # to the new Claim Form 2 tab once it opens. Keep a handle on the
+        # original Claim Forms list tab here so _close_claim_form_2_tab()
+        # can switch back to it later - reassigning `page` doesn't create
+        # a second variable, so without this the original tab reference
+        # is lost the moment the new tab opens.
+        original_page = page
+
+        # Member mobile is already API-based in this version of the
+        # automation; keep that implementation unchanged.
         member_mobile = None
 
         def _get_member_mobile_from_api():
             nonlocal member_mobile
-            ids = cf2_api.extract_ids_from_url(page.url)
-            cf1_summary = cf2_api.get_cf1_summary(ids["claim_id"])
+            cf1_summary = cf2_api.get_cf1_summary(claim_id)
             member_mobile = (cf1_summary or {}).get("memberMobileNumber")
             if not member_mobile:
                 raise cf2_api.Cf2ApiError(
                     f"GetPHICCF1Summary returned no memberMobileNumber "
-                    f"for claimId={ids['claim_id']}."
+                    f"for claimId={claim_id}."
                 )
             member_mobile = str(member_mobile).strip()
             print(f"Member mobile from CF1 API: {member_mobile}")
@@ -1547,223 +1688,63 @@ class CF2Automation:
             critical=True,
         )
 
-        def _open():
-            page.locator('#cf2Save').get_by_role("button", name="Statement of Account").click()
-            page.wait_for_load_state("networkidle")
-
-        self._step("Opening Statement of Account...", _open, critical=True)
-        page.wait_for_timeout(1000)
-
-        self._step(
-            "Opening Signatories tab...",
-            lambda: page.get_by_role("button", name="Signatories").click(),
-            critical=True,
-        )
-        page.wait_for_timeout(500)
-
-        date_str = data.last_treatment.strftime("%m%d%Y")
-
-        # Read these once up front (instead of inline inside each fill
-        # closure) so the same expected values can be reused below when
-        # verifying the fields actually stuck.
         billing_clerk_name = self._get_billing_clerk_name()
         billing_clerk_cp = self._get_billing_clerk_cp()
+        date_str = data.last_treatment.strftime("%m-%d-%Y")
 
-        # Locators are resolved fresh on every use (Playwright re-queries
-        # the DOM each call), so grabbing them once here and reusing them
-        # in both the fill and the refill/verify closures below is safe.
-        prepared_by_input = page.locator('input[name="preparedBy"]')
-        contact_input = page.locator('input[name="adminContactNo"]')
-        admin_date_input = page.locator('input[id^="adminDateSigned-MM-DD-YYYY"]')
-        patient_rep_input = page.locator('input[name="patientRepresentative"]')
-        representative_contact_input = page.locator('input[name="representativeContactNo"]')
-        conforme_date_input = page.locator('input[id^="representativeDateSigned-MM-DD-YYYY"]')
+        signatories = cf2_api.get_esoa_signatories(claim_id)
+        if not signatories:
+            raise cf2_api.Cf2ApiError(
+                f"GetEsoaSignatories returned no record for phicClaimId={claim_id}."
+            )
 
-        def _fill_prepared_by():
-            prepared_by_input.click()
-            prepared_by_input.press("Control+A")
-            prepared_by_input.press("Backspace")
-            prepared_by_input.fill(billing_clerk_name)
-            prepared_by_input.press("Tab")
+        signatory_id = signatories.get("id")
+        if signatory_id is None:
+            raise cf2_api.Cf2ApiError(
+                f"GetEsoaSignatories returned no id for phicClaimId={claim_id}."
+            )
 
-        self._step(
-            "Filling Prepared by (Billing Clerk / Accountant) from Excel...",
-            _fill_prepared_by,
-            critical=True,
-        )
-        page.wait_for_timeout(300)
+        payload = {
+            "phicClaimId": claim_id,
+            "id": signatory_id,
+            "preparedBy": billing_clerk_name,
+            "adminContactNo": billing_clerk_cp,
+            "adminDateSigned": date_str,
+            "patientRepresentative": data.patient_name,
+            "relationshipOfRepresentative": "",
+            "representativeContactNo": member_mobile,
+            "representativeDateSigned": date_str,
+        }
 
-        def _fill_prepared_by_cp():
-            contact_input.click()
-            contact_input.press("Control+A")
-            contact_input.press("Backspace")
-            contact_input.fill(billing_clerk_cp)
-            contact_input.press("Tab")
+        print("Updating Statement of Account Signatories via API...")
+        cf2_api.update_esoa_signatories(payload)
+        print("Statement of Account Signatories saved via API.")
 
-        self._step(
-            "Filling Billing Clerk Contact No. from Excel...",
-            _fill_prepared_by_cp,
-            critical=True,
-        )
+        # Verify the persisted backend record rather than relying on DOM
+        # values. This also catches a successful HTTP response that did not
+        # actually persist one of the submitted fields.
+        saved = cf2_api.get_esoa_signatories(claim_id)
+        if not saved:
+            raise cf2_api.Cf2ApiError(
+                f"GetEsoaSignatories returned no record after save for "
+                f"phicClaimId={claim_id}."
+            )
 
-        page.wait_for_timeout(300)
-
-        def _fill_admin_date():
-            admin_date_input.click()
-            admin_date_input.press("Control+A")
-            admin_date_input.press("Backspace")
-            admin_date_input.type(date_str, delay=100)
-            admin_date_input.press("Tab")
-
-        def _fill_patient_representative():
-            patient_rep_input.click()
-            patient_rep_input.press("Control+A")
-            patient_rep_input.press("Backspace")
-            patient_rep_input.fill(data.patient_name)
-
-        def _fill_representative_contact():
-            representative_contact_input.click()
-            representative_contact_input.press("Control+A")
-            representative_contact_input.press("Backspace")
-            representative_contact_input.fill(member_mobile)
-            representative_contact_input.press("Tab")
-
-        def _fill_conforme_date():
-            conforme_date_input.click()
-            conforme_date_input.press("Control+A")
-            conforme_date_input.press("Backspace")
-            page.wait_for_timeout(200)
-            conforme_date_input.type(date_str, delay=100)
-
-        def _fill_signatories():
-            _fill_admin_date()
-            page.wait_for_timeout(300)
-
-            _fill_patient_representative()
-            page.wait_for_timeout(300)
-
-            _fill_representative_contact()
-            page.wait_for_timeout(300)
-
-            _fill_conforme_date()
-
-        self._step("Filling Signatories...", _fill_signatories, critical=True)
-        page.wait_for_timeout(300)
-
-        # --- Validation ---------------------------------------------------
-        # Beacon is occasionally unstable: even after a field is typed into
-        # (and reports a successful click/fill/Tab), the DOM can clear that
-        # field's content on its own shortly after — so a field that looked
-        # filled a moment ago can be empty by the time Save is clicked,
-        # silently producing a Statement of Account with blank signatories.
-        # Re-read every field we just filled and, if any came back
-        # empty/mismatched, re-run its fill and check again before saving,
-        # instead of finding out only after the record is already saved.
-        def _digits_only(s):
-            return "".join(ch for ch in (s or "") if ch.isdigit())
-
-        def _verify_text_field(locator, expected, field_name, refill, attempts=3):
-            if not expected:
-                # Nothing expected here (e.g. contact no. genuinely blank
-                # in the uploaded sheet) — nothing to validate.
-                return
-
-            expected = expected.strip()
-            for attempt in range(1, attempts + 1):
-                actual = (locator.input_value() or "").strip()
-                if actual == expected:
-                    return
-                print(
-                    f"WARNING: '{field_name}' expected '{expected}' but "
-                    f"found '{actual}' (attempt {attempt}/{attempts}) — "
-                    f"Beacon likely cleared it, refilling..."
-                )
-                refill()
-                page.wait_for_timeout(400)
-
-            actual = (locator.input_value() or "").strip()
-            if actual != expected:
-                raise Exception(
-                    f"'{field_name}' still not filled correctly after "
-                    f"{attempts} attempts (expected '{expected}', got "
-                    f"'{actual}')"
+        expected = {
+            "preparedBy": billing_clerk_name,
+            "adminContactNo": billing_clerk_cp,
+            "patientRepresentative": data.patient_name,
+            "representativeContactNo": member_mobile,
+        }
+        for field, expected_value in expected.items():
+            actual_value = str(saved.get(field) or "").strip()
+            if actual_value != str(expected_value or "").strip():
+                raise cf2_api.Cf2ApiError(
+                    f"Signatories verification failed for {field}: "
+                    f"expected '{expected_value}', got '{actual_value}'."
                 )
 
-        def _verify_date_field(locator, expected_date_str, field_name, refill, attempts=3):
-            # Date inputs may auto-format what's typed (e.g. adding
-            # slashes), so compare digits only rather than exact strings.
-            expected_digits = _digits_only(expected_date_str)
-            for attempt in range(1, attempts + 1):
-                actual = locator.input_value() or ""
-                if actual.strip() and _digits_only(actual) == expected_digits:
-                    return
-                print(
-                    f"WARNING: '{field_name}' expected date digits "
-                    f"'{expected_digits}' but found '{actual}' (attempt "
-                    f"{attempt}/{attempts}) — Beacon likely cleared it, "
-                    f"refilling..."
-                )
-                refill()
-                page.wait_for_timeout(400)
-
-            actual = locator.input_value() or ""
-            if not (actual.strip() and _digits_only(actual) == expected_digits):
-                raise Exception(
-                    f"'{field_name}' still not filled correctly after "
-                    f"{attempts} attempts (expected date digits "
-                    f"'{expected_digits}', got '{actual}')"
-                )
-
-        def _verify_signatories_filled():
-            _verify_text_field(
-                prepared_by_input, billing_clerk_name,
-                "Prepared by (Billing Clerk / Accountant)", _fill_prepared_by,
-            )
-            _verify_text_field(
-                contact_input, billing_clerk_cp,
-                "Billing Clerk Contact No.", _fill_prepared_by_cp,
-            )
-            _verify_date_field(
-                admin_date_input, date_str,
-                "Date Signed (Admin)", _fill_admin_date,
-            )
-            _verify_text_field(
-                patient_rep_input, data.patient_name,
-                "Patient Representative", _fill_patient_representative,
-            )
-            _verify_text_field(
-                representative_contact_input, member_mobile,
-                "Representative Contact No.", _fill_representative_contact,
-            )
-            _verify_date_field(
-                conforme_date_input, date_str,
-                "Date Signed (Conforme)", _fill_conforme_date,
-            )
-
-        self._step(
-            "Verifying Statement of Account fields filled correctly...",
-            _verify_signatories_filled,
-            critical=True,
-        )
-        page.wait_for_timeout(300)
-
-        def _save_signatories():
-            page.evaluate("document.querySelector('button[type=\"submit\"]').scrollIntoView()")
-            page.wait_for_timeout(300)
-            page.get_by_role("button", name="SAVE").last.click()
-            page.wait_for_load_state("networkidle")
-
-        self._step("Saving Signatories...", _save_signatories, critical=True)
-        page.wait_for_timeout(1000)
-
-        self._step(
-            "Closing Statement of Account...",
-            lambda: (page.get_by_role("button", name="Close").click(), page.wait_for_load_state("networkidle")),
-            critical=False,
-        )
-        page.wait_for_timeout(1000)
-
-        print("Statement of Account closed.")
+        print("Statement of Account Signatories verified via API.")
 
         def _open_claim_forms():
             page.get_by_role(

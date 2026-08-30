@@ -84,10 +84,48 @@ def _headers():
     }
 
 
+def _raise_for_status(response, path):
+    """Like response.raise_for_status(), but folds the response body into
+    the raised error instead of discarding it. A bare requests.HTTPError's
+    str() is just "400 Client Error: Bad Request for url: ..." - useless
+    for figuring out *which* field Beacon rejected. Callers (and the
+    fallback-to-UI warning prints in cf2_automation.py) see this message,
+    so keep it short enough to print but long enough to actually debug.
+
+    On a 5xx, Beacon's body is deliberately generic ("An unexpected error
+    occurred...") - there's no field-level detail to extract client-side,
+    that's a server-side bug/edge-case, not a payload mistake we can fix
+    by inspection. The one extra thing worth capturing in that case is
+    any request/correlation id header, since that's what Beacon's own
+    team would need to look up their server-side exception - so grab
+    whichever of the common header names is present.
+    """
+    if response.ok:
+        return
+    body = (response.text or "").strip()
+    if len(body) > 2000:
+        body = body[:2000] + "...(truncated)"
+    trace_id = None
+    for header_name in (
+        "x-correlation-id",
+        "x-request-id",
+        "x-trace-id",
+        "request-id",
+        "traceid",
+    ):
+        if header_name in response.headers:
+            trace_id = response.headers[header_name]
+            break
+    suffix = f" [trace id: {trace_id}]" if trace_id else ""
+    raise Cf2ApiError(
+        f"{response.status_code} {response.reason} for {path}: {body}{suffix}"
+    )
+
+
 def _get(path, params=None, base=None):
     url = f"{base or _base_url()}{path}"
     response = requests.get(url, headers=_headers(), params=params, timeout=20)
-    response.raise_for_status()
+    _raise_for_status(response, path)
     return response.json() if response.content else None
 
 
@@ -96,7 +134,7 @@ def _post(path, json_body=None, params=None, base=None):
     response = requests.post(
         url, headers=_headers(), json=json_body, params=params, timeout=20
     )
-    response.raise_for_status()
+    _raise_for_status(response, path)
     return response.json() if response.content else None
 
 
@@ -105,7 +143,7 @@ def _put(path, json_body=None, params=None, base=None):
     response = requests.put(
         url, headers=_headers(), json=json_body, params=params, timeout=20
     )
-    response.raise_for_status()
+    _raise_for_status(response, path)
     return response.json() if response.content else None
 
 
@@ -148,6 +186,31 @@ def get_cf1_summary(claim_id):
     return _get(
         "/api/PHICCF1/GetPHICCF1Summary",
         params={"id": claim_id},
+    )
+
+
+def get_esoa_signatories(phic_claim_id):
+    """Get the existing Statement of Account signatory record.
+
+    Confirmed from Beacon Network traffic: this is the GET request used by
+    the Signatories tab and its response supplies the existing ``id`` needed
+    by Update-signatories.
+    """
+    return _get(
+        "/api/PHICEsoa/GetEsoaSignatories",
+        params={"phicClaimId": phic_claim_id},
+    )
+
+
+def update_esoa_signatories(payload):
+    """Save the Statement of Account Signatories through Beacon's API.
+
+    Confirmed from the captured SAVE request:
+        POST /api/PHICEsoa/Update-signatories
+    """
+    return _post(
+        "/api/PHICEsoa/Update-signatories",
+        json_body=payload,
     )
 
 
@@ -215,6 +278,114 @@ def to_utc_midnight_iso(local_date):
     d = local_date.date() if hasattr(local_date, "date") else local_date
     prev_day = d - timedelta(days=1)
     return prev_day.strftime("%Y-%m-%dT16:00:00.000Z")
+
+
+def to_utc_noon_iso(local_date):
+    """
+    Beacon represents DISCHARGE TIME specifically as 12:00 PM local
+    (Philippines, UTC+8) once it's been changed from the default AM to
+    PM - confirmed via a full HAR capture of a real CF2 save: discharge
+    date 07-01-2026 was sent as dischargeDateTime/dischargeTime =
+    "2026-07-01T04:00:00.000Z" (04:00 UTC = 12:00 PM local, SAME
+    calendar day - unlike to_utc_midnight_iso, which represents local
+    midnight and therefore needs the PREVIOUS day). Accepts a date or
+    datetime; returns that same string format.
+    """
+    d = local_date.date() if hasattr(local_date, "date") else local_date
+    return d.strftime("%Y-%m-%dT04:00:00.000Z")
+
+
+def get_cf2(claim_id):
+    """
+    Get the full current CF2 record.
+
+    CONFIRMED WRONG ASSUMPTION (found via live debugging, not the
+    original HAR capture): GetPHICCF2ById does NOT embed
+    surgicalProcedures - even on a claim that already has one tagged
+    via NewPHICAllCaseRate, this comes back null/absent here. It has
+    to be fetched separately via get_surgical_procedures() and merged
+    into the record with build_surgical_procedures_for_cf2() before
+    calling edit_cf2() - see that function's docstring for the exact
+    required shape, confirmed against a real successful browser save
+    payload. Skipping this merge is what caused EditPHICCF2 to 500
+    unconditionally, regardless of any other field's value.
+
+    Every OTHER field (newborn/TB DOTS/animal bite/cataract sections,
+    claim type, audit fields like version/dateUpdated, etc.) does
+    round-trip as-is and must be carried through unchanged - only
+    surgicalProcedures needs this extra stitching step.
+    """
+    return _get("/api/PHICCF2/GetPHICCF2ById", params={"claimId": claim_id})
+
+
+def build_surgical_procedures_for_cf2(cf2_id):
+    """
+    Build the "surgicalProcedures" list EditPHICCF2 requires embedded
+    in the CF2 record, from get_surgical_procedures()'s raw response.
+
+    Confirmed against a real, successful browser save payload (DevTools
+    capture) for a claim with one tagged Hemodialysis procedure/session.
+    Two things differ from the raw GetPHICSurgicalProcedure response:
+
+    1. Each session dict must have its 7 audit/tracking keys stripped
+       (version, createdById, createdBy, dateCreated, updatedById,
+       updatedBy, dateUpdated) - same keys tag_first_case() already
+       strips for its own (different) NewPHICAllCaseRate payload.
+    2. Unlike tag_first_case()'s payload, sessionDate here must be a
+       plain "MM-DD-YYYY" string (matching admissionDate/dischargeDate's
+       format elsewhere in the same record) - NOT the ISO datetime
+       string tag_first_case() sends, and NOT the raw
+       "YYYY-MM-DDTHH:MM:SS" string get_surgical_procedures() returns.
+
+    Everything else (the procedure-level fields, including its own
+    audit keys) is passed through unchanged - only the nested session
+    dicts need reshaping.
+
+    Returns [] if the claim has no surgical procedure yet (nothing to
+    stitch in - fine to assign directly to cf2_record["surgicalProcedures"]).
+    """
+    procedures = get_surgical_procedures(cf2_id) or []
+    result = []
+    for procedure in procedures:
+        procedure = dict(procedure)  # shallow copy, don't mutate caller's data
+        sessions = []
+        for session in procedure.get("sessions") or []:
+            session = {
+                k: v
+                for k, v in session.items()
+                if k not in (
+                    "version",
+                    "createdById",
+                    "createdBy",
+                    "dateCreated",
+                    "updatedById",
+                    "updatedBy",
+                    "dateUpdated",
+                )
+            }
+            raw_date = session.get("sessionDate")
+            if raw_date:
+                # Raw shape from GetPHICSurgicalProcedure is
+                # "YYYY-MM-DDTHH:MM:SS" (no timezone) - reformat to
+                # plain MM-DD-YYYY to match the confirmed working
+                # payload.
+                d = datetime.strptime(raw_date.split("T")[0], "%Y-%m-%d")
+                session["sessionDate"] = d.strftime("%m-%d-%Y")
+            sessions.append(session)
+        procedure["sessions"] = sessions
+        result.append(procedure)
+    return result
+
+
+def edit_cf2(cf2_record):
+    """PUT the full CF2 record back.
+
+    IMPORTANT: cf2_record["surgicalProcedures"] must be populated via
+    build_surgical_procedures_for_cf2() first if the claim has a
+    tagged surgical procedure - see get_cf2()'s docstring. Sending the
+    record as get_cf2() returns it, unmodified, will 500 on any claim
+    that has one, regardless of every other field's value."""
+    return _put("/api/PHICCF2/EditPHICCF2", json_body=cf2_record)
 
 
 # ---------------------------------------------------------------------
