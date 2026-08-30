@@ -9,7 +9,6 @@ import cf2_api
 from cf2_fees import get_fees
 from draft_automation import (
     run_create_draft_flow,
-    try_extract_transmittal_number,
     InvalidMemberPinError,
 )
 from draft_title import build_draft_title
@@ -195,8 +194,7 @@ class CF2Automation:
     def _get_ids(self, page):
         """Return the IDs for the patient currently being processed.
 
-        Existing-draft mode resolves these directly through the API. New-draft
-        mode still gets them from draft_automation's resulting claim-details URL.
+        Both existing-draft and new-draft modes resolve these through APIs.
         The first successful resolution is cached for the rest of this patient.
         """
         if self._current_ids is not None:
@@ -293,18 +291,14 @@ class CF2Automation:
         discharge_date = data.last_treatment.strftime("%m/%d/%Y")
         draft_title = build_draft_title(data.patient_name, data.first_treatment, data.last_treatment)
 
-        def _run():
-            run_create_draft_flow(page, data.member_pin, admission_date, discharge_date, draft_title)
-
-        self._step(
-            f"Creating draft + Add Claims (PIN: {data.member_pin}, Title: {draft_title})...",
-            _run,
-            critical=True,
+        result = run_create_draft_flow(
+            page, data.member_pin, admission_date, discharge_date, draft_title
         )
-
-        # Best-effort only — logging/results use this, nothing downstream
-        # depends on it being exact. See draft_automation.try_extract_transmittal_number.
-        data.transmittal = try_extract_transmittal_number(page)
+        self._current_ids = {
+            "transmittal_id": int(result["transmittal_id"]),
+            "claim_id": int(result["claim_id"]),
+        }
+        data.transmittal = result.get("transmittal_number") or "AUTO-GENERATED"
         print(f"Draft created. Transmittal number: {data.transmittal}")
 
     # ------------------------------------------------------------------

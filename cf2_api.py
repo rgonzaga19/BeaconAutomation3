@@ -206,6 +206,7 @@ def _date_from_value(value):
     for candidate, fmt in (
         (text.split("T")[0], "%Y-%m-%d"),
         (text, "%m-%d-%Y"),
+        (text, "%m/%d/%Y"),
     ):
         try:
             return datetime.strptime(candidate, fmt).date()
