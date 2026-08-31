@@ -325,6 +325,87 @@ def _session_dates_from_cf2(claim_id):
     return session_dates
 
 
+def _doctor_full_name(doctor):
+    """Use Beacon's own fullName when available; otherwise rebuild it."""
+    full_name = str(doctor.get("fullName") or "").strip()
+    if full_name:
+        return full_name
+
+    parts = [
+        doctor.get("firstname"),
+        doctor.get("middlename"),
+        doctor.get("lastname"),
+        doctor.get("suffix"),
+    ]
+    return " ".join(
+        str(part).strip()
+        for part in parts
+        if str(part or "").strip()
+    )
+
+
+def _last_treatment_date(session_dates):
+    """Return the latest CF2 treatment/session date."""
+    dated = [
+        (_parse_calendar_date(value), value)
+        for value in session_dates
+        if value
+    ]
+    dated = [(parsed, raw) for parsed, raw in dated if parsed is not None]
+
+    if not dated:
+        return None
+
+    _, latest_raw = max(dated, key=lambda item: item[0])
+    return latest_raw
+
+
+def _save_cf4_new_tab_doctor(claim_id, session_dates):
+    """Populate CF4 New-tab doctor/sign date only when a doctor exists."""
+    doctors = beacon_api.get_doctors_by_claim_id(claim_id)
+    if not doctors:
+        logger.info(
+            "No doctor encoded on claim — skipping CF4 New-tab doctor data."
+        )
+        return
+
+    # Preserve the automation's established first-row behavior for claim data.
+    doctor = doctors[0]
+    doctor_name = _doctor_full_name(doctor)
+
+    if not doctor_name:
+        logger.warning(
+            "Doctor exists but has no usable name — "
+            "skipping CF4 New-tab doctor data."
+        )
+        return
+
+    last_treatment = _last_treatment_date(session_dates)
+    if last_treatment is None:
+        logger.warning(
+            "Doctor exists but no CF2 treatment/session date was found — "
+            "skipping CF4 New-tab doctor data."
+        )
+        return
+
+    date_signed = _local_date_to_beacon_utc(last_treatment)
+
+    saved = beacon_api.new_pdf_cf4(
+        claim_id,
+        doctor_name,
+        date_signed,
+    )
+    if not saved:
+        raise Exception(
+            "NewPdfCF4 returned an unsuccessful/empty response"
+        )
+
+    logger.success(
+        "CF4 New tab updated: "
+        f"doctor={doctor_name}, last treatment={last_treatment}"
+    )
+
+
 def _medicine_rule(medicine):
     """Preserve the original medicine-identification/search precedence."""
     haystack = " ".join(
@@ -669,6 +750,14 @@ def _process_transmittal(
         raise Exception(
             "SavePhicCf4Values returned an empty response"
         )
+
+    # Final CF4 step from the recorded New-tab workflow:
+    # when a doctor is already encoded, use the first doctor and the latest
+    # CF2 treatment/session date for the CF4 attending-doctor signature data.
+    _save_cf4_new_tab_doctor(
+        claim_id,
+        session_dates,
+    )
 
     logger.success(f"SUCCESS: Patient {transmittal_no} saved")
     report.success(

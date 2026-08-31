@@ -195,6 +195,41 @@ def get_cf4_values(claim_id):
     )
 
 
+def get_doctors_by_claim_id(claim_id):
+    """Return doctors already encoded on the claim."""
+    data = _get(
+        "/api/PHICDoctor/GetAllPHICDoctorByClaimId",
+        params={"claimId": claim_id},
+    ) or []
+
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+        for key in ("items", "data", "doctors", "phicDoctors"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+
+    return []
+
+
+def new_pdf_cf4(claim_id, doctor_name, date_signed):
+    """Save the CF4 New-tab attending doctor/sign date data."""
+    return _post(
+        "/api/PHICDocument/NewPdfCF4",
+        json_body={
+            "phicClaimId": str(claim_id),
+            "type": "cf4",
+            "revision": "revision",
+            "data": {
+                "sigOverPrintedNameOfAttendingHCProf": doctor_name,
+                "dateSigned": date_signed,
+            },
+        },
+    )
+
+
 def get_surgical_procedures(cf2_id):
     data = _get(
         "/api/PHICSurgicalProcedure/GetPHICSurgicalProcedure",
