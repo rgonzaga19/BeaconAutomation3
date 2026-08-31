@@ -13,6 +13,7 @@ const ICON_PATH = path.join(__dirname, "bot.ico");
 
 let serverProcess = null;
 const windows = {
+  login: null,
   dashboard: null,
   cf2: null,
   uploadSoa: null,
@@ -249,6 +250,21 @@ function waitForServer(onReady, attempt = 0) {
 // ---------------------------------------------------------------------------
 // Single-window-visible-at-a-time navigation helpers
 // ---------------------------------------------------------------------------
+function hideLogin() {
+  const login = windows.login;
+  if (login && !login.isDestroyed()) login.hide();
+}
+
+function showLogin() {
+  const login = windows.login;
+  if (login && !login.isDestroyed()) {
+    login.show();
+    login.focus();
+  } else {
+    createLoginWindow();
+  }
+}
+
 function hideDashboard() {
   const dash = windows.dashboard;
   if (dash && !dash.isDestroyed()) dash.hide();
@@ -354,6 +370,14 @@ function createWindow(key, htmlFile, options = {}) {
   return win;
 }
 
+function createLoginWindow() {
+  return createWindow("login", "login.html", {
+    width: 380,
+    height: 390,
+    resizable: false,
+  });
+}
+
 function createDashboardWindow() {
   return createWindow("dashboard", "dashboard.html", {
     width: 1200,
@@ -393,10 +417,11 @@ function createCf4Window() {
   });
 }
 
-// Settings is deliberately NOT exclusive — it's the one window allowed to
-// stay open alongside the dashboard.
+// Settings is now the login window — allows users to change credentials
+// from the dashboard. It's deliberately NOT exclusive — it's the one window
+// allowed to stay open alongside the dashboard.
 function createSettingsWindow() {
-  return createWindow("settings", "settings.html", {
+  return createWindow("settings", "login.html", {
     width: 380,
     height: 390,
     resizable: false,
@@ -522,6 +547,18 @@ ipcMain.handle("nav:goHome", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.hide();
   showDashboard();
+});
+
+// Navigate from login to dashboard
+ipcMain.handle("nav:goToDashboard", (event) => {
+  hideLogin();
+  showDashboard();
+});
+
+// Logout — hide dashboard and show login window
+ipcMain.handle("nav:logout", (event) => {
+  hideDashboard();
+  showLogin();
 });
 
 // Safety valve for the forced-update window: if it decides (independently
@@ -928,12 +965,13 @@ app.whenReady().then(() => {
     const mandatoryUpdate = await checkMandatoryUpdate();
     if (mandatoryUpdate) {
       // A required update is pending — show only the locked-down
-      // About/Update window and skip the dashboard entirely. Nothing else
+      // About/Update window and skip the login/dashboard entirely. Nothing else
       // in the app is reachable from here (no Home button, no closing)
       // until the update is installed.
       createAboutWindow(true);
     } else {
-      createDashboardWindow();
+      // Show login window first as entry point
+      createLoginWindow();
     }
   });
 
@@ -942,7 +980,7 @@ app.whenReady().then(() => {
       if (forcedUpdateActive) {
         createAboutWindow(true);
       } else {
-        createDashboardWindow();
+        createLoginWindow();
       }
     }
   });

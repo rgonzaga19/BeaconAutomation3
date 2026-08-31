@@ -8,7 +8,7 @@ import requests
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-from settings import load_settings
+from login import load_login_settings
 from logger import logger
 
 
@@ -26,9 +26,9 @@ BEACON_URLS = {
 
 
 def _get_beacon_url():
-    """Resolve the Beacon URL from the user's S2/S4 toggle in Settings,
+    """Resolve the Beacon URL from the user's S2/S4 toggle in Login,
     falling back to S4 (the previous hardcoded default) if unset/unknown."""
-    settings = load_settings()
+    settings = load_login_settings()
     server = settings.get("server", "s4")
     return BEACON_URLS.get(server, BEACON_URLS["s4"])
 
@@ -155,7 +155,7 @@ def _ensure_auth_token(username=None, password=None):
             return _auth_token.get("access_token")
 
     if username is None or password is None:
-        settings = load_settings()
+        settings = load_login_settings()
         username = settings["username"]
         password = settings["password"]
 
@@ -293,7 +293,7 @@ def connect():
         except Exception:
             disconnect()
 
-    settings = load_settings()
+    settings = load_login_settings()
 
     username = settings["username"]
     password = settings["password"]

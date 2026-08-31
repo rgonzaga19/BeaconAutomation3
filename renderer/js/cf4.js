@@ -498,3 +498,171 @@ document.getElementById("btnCancel").addEventListener("click", () => {
 });
 
 loadSettings();
+
+// ---------------------------------------------------------------------------
+// TAB SWITCHING
+// ---------------------------------------------------------------------------
+const tabBtns = document.querySelectorAll(".tab-btn");
+const tabContents = document.querySelectorAll(".tab-content");
+
+tabBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const tabName = btn.dataset.tab;
+    
+    // Deactivate all tabs
+    tabBtns.forEach((b) => b.classList.remove("active"));
+    tabContents.forEach((content) => content.classList.remove("active"));
+    
+    // Activate selected tab
+    btn.classList.add("active");
+    document.getElementById(tabName).classList.add("active");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUTOMATION: Transmittal textarea + count label 
+// ---------------------------------------------------------------------------
+const transmittalsInput = document.getElementById("transmittalsInput");
+const countLabel = document.getElementById("countLabel");
+
+function updateCount() {
+  const lines = transmittalsInput.value.split("\n").map((l) => l.trim()).filter(Boolean);
+  const n = lines.length;
+  countLabel.textContent = `${n} transmittal${n !== 1 ? "s" : ""}`;
+}
+transmittalsInput.addEventListener("keyup", updateCount);
+
+// ---------------------------------------------------------------------------
+// AUTOMATION: Log box (same colour-tag detection as ui.py's write_log)
+// ---------------------------------------------------------------------------
+const logBox = document.getElementById("logBox");
+
+function writeLog(message, explicitLevel) {
+  let tag = "INFO";
+  const upper = message.toUpperCase();
+
+  if (explicitLevel) {
+    tag = explicitLevel;
+  } else if (upper.includes("[SUCCESS]") || upper.includes("SUCCESS:") || upper.startsWith("SUCCESS")) {
+    tag = "SUCCESS";
+  } else if (upper.includes("[WARNING]") || upper.includes("WARNING:") || upper.startsWith("WARNING") || upper.includes("[DEV]")) {
+    tag = "DIM";
+  } else if (upper.includes("[ERROR]") || upper.includes("ERROR:") || upper.startsWith("ERROR")) {
+    tag = "ERROR";
+  } else if (message.startsWith("=") || message.trim() === "") {
+    tag = "DIM";
+  }
+
+  const line = document.createElement("div");
+  line.className = `log-line ${tag}`;
+  line.textContent = message;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function clearLogs() {
+  logBox.innerHTML = "";
+}
+
+// ---------------------------------------------------------------------------
+// AUTOMATION: Report box (same layout as ui.py's show_report)
+// ---------------------------------------------------------------------------
+const reportBox = document.getElementById("reportBox");
+
+function showReport(results) {
+  reportBox.innerHTML = "";
+
+  const hdr = document.createElement("div");
+  hdr.className = "log-line INFO";
+  hdr.style.color = "var(--accent)";
+  hdr.textContent = `${"TRANSMITTAL".padEnd(20)} ${"STATUS".padEnd(12)} REMARKS`;
+  reportBox.appendChild(hdr);
+
+  const rule = document.createElement("div");
+  rule.className = "log-line INFO";
+  rule.style.color = "var(--accent)";
+  rule.textContent = "─".repeat(60);
+  reportBox.appendChild(rule);
+
+  (results || []).forEach((item) => {
+    const tag = item.status === "SUCCESS" ? "SUCCESS" : item.status === "SKIPPED" ? "WARNING" : "ERROR";
+    const line = document.createElement("div");
+    line.className = `log-line ${tag}`;
+    line.textContent = `${String(item.transmittal).padEnd(20)} ${String(item.status).padEnd(12)} ${item.remarks}`;
+    reportBox.appendChild(line);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// AUTOMATION: Status and controls
+// ---------------------------------------------------------------------------
+const progressFill = document.getElementById("progressFill");
+const startBtn = document.getElementById("startBtn");
+
+function disableControls() {
+  startBtn.disabled = true;
+  transmittalsInput.disabled = true;
+  progressFill.classList.remove("idle");
+}
+
+function enableControls() {
+  startBtn.disabled = false;
+  transmittalsInput.disabled = false;
+  progressFill.classList.add("idle");
+}
+
+// ---------------------------------------------------------------------------
+// AUTOMATION: Start automation (same flow as ui.py's start_automation())
+// ---------------------------------------------------------------------------
+startBtn.addEventListener("click", async () => {
+  // License check
+  const license = await fetchJSON("/api/license/validate", { method: "POST" });
+  if (!license.valid) {
+    showError(license.error && license.error.includes("license") ? "License Error" : "Access Denied", license.error || "Invalid or expired license.");
+    return;
+  }
+
+  const transmittals = transmittalsInput.value
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (transmittals.length === 0) {
+    showError("No Input", "Please paste at least one transmittal number.");
+    return;
+  }
+
+  clearLogs();
+  showReport([]);
+  writeLog("Automation started.");
+  writeLog(`Found ${transmittals.length} transmittal(s).`);
+  disableControls();
+
+  const result = await fetchJSON("/api/beacon/start", {
+    method: "POST",
+    body: JSON.stringify({
+      transmittals,
+      auto_encode_cf4: document.getElementById("autoEncodeCf4").checked,
+    }),
+  });
+
+  if (result.error) {
+    writeLog(`ERROR: ${result.error}`, "ERROR");
+    enableControls();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AUTOMATION: Socket.IO — live log stream + completion events from server.py
+// ---------------------------------------------------------------------------
+const socket = io(API_BASE);
+
+socket.on("log", (data) => writeLog(data.message, data.level));
+
+socket.on("beacon_done", (data) => {
+  showReport(data.results);
+  enableControls();
+});
+
+// Initialize counts on load
+updateCount();

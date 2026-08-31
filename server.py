@@ -2,7 +2,7 @@
 Local backend server for the Beabots Electron front end.
 
 This wraps the EXISTING business/automation logic — license.py,
-settings.py's load_settings/save_settings, cf2_automation.py, cf2_mapper.py,
+login.py's load_login_settings/save_login_settings, cf2_automation.py, cf2_mapper.py,
 soa_automation.py, patient_record.py, date_parser.py, logger.py — behind a
 small HTTP + WebSocket API. No automation/business logic was changed here;
 only *how results reach the UI* changed: structured JSON responses and
@@ -31,7 +31,7 @@ from flask_cors import CORS
 from openpyxl import load_workbook
 
 from license import validate_license, LicenseError
-from settings import load_settings, save_settings
+from login import load_login_settings, save_login_settings
 from logger import logger
 from patient_record import PatientRecord
 from date_parser import parse_dates
@@ -210,7 +210,7 @@ def _load_cf4_settings():
     """Current CF4 defaults, merged over DEFAULT_CF4_SETTINGS so a
     settings.json saved before some new field existed doesn't come back
     with that field missing."""
-    settings = load_settings()
+    settings = load_login_settings()
     return {**DEFAULT_CF4_SETTINGS, **settings.get("cf4", {})}
 
 
@@ -243,20 +243,20 @@ def resource_path(relative_path):
 # ---------------------------------------------------------------------------
 @app.route("/api/settings", methods=["GET"])
 def get_settings():
-    return jsonify(load_settings())
+    return jsonify(load_login_settings())
 
 
 @app.route("/api/settings", methods=["POST"])
 def post_settings():
     """
     Body: {"username": ..., "password": ..., "access_key": ...}
-    save_settings() itself still owns the "clear session.json if credentials
-    changed" rule — untouched, unchanged from settings.py.
+    save_login_settings() itself still owns the "clear session.json if credentials
+    changed" rule — untouched, unchanged from login.py.
     """
     data = request.get_json(force=True)
-    settings = load_settings()
+    settings = load_login_settings()
     settings.update(data)
-    save_settings(settings)
+    save_login_settings(settings)
     return jsonify(settings)
 
 
@@ -272,13 +272,13 @@ def post_cf4_settings():
     """
     Body: any subset of DEFAULT_CF4_SETTINGS' keys. Merged over the
     current saved values (not replaced wholesale), then written into
-    settings.json under "cf4" via the existing save_settings().
+    settings.json under "cf4" via the existing save_login_settings().
     """
     data = request.get_json(force=True)
-    settings = load_settings()
+    settings = load_login_settings()
     cf4 = {**DEFAULT_CF4_SETTINGS, **settings.get("cf4", {}), **data}
     settings["cf4"] = cf4
-    save_settings(settings)
+    save_login_settings(settings)
     return jsonify(cf4)
 
 
@@ -290,7 +290,7 @@ def license_validate():
     showing the CF2 or Upload SOA screen, same as before.
     """
     try:
-        settings = load_settings()
+        settings = load_login_settings()
         entered_key = settings.get("access_key", "").strip()
         license_info = validate_license(entered_key)
 
@@ -300,7 +300,7 @@ def license_validate():
         settings["license_owner"] = license_info["owner"]
         settings["license_plan"] = license_info["plan"]
         settings["license_expiry"] = license_info["expires"]
-        save_settings(settings)
+        save_login_settings(settings)
 
         return jsonify({"valid": True, **license_info})
 
@@ -540,10 +540,10 @@ def soa_start():
         return jsonify({"error": "Automation already running."}), 409
 
     # Remember the folder choice for next time — same as the old
-    # browse_soa_folder()'s settings["soa_folder"] = chosen; save_settings(settings)
-    settings = load_settings()
+    # browse_soa_folder()'s settings["soa_folder"] = chosen; save_login_settings(settings)
+    settings = load_login_settings()
     settings["soa_folder"] = soa_folder
-    save_settings(settings)
+    save_login_settings(settings)
 
     _soa_running = True
     threading.Thread(target=_run_soa_automation, args=(soa_folder, transmittals), daemon=True).start()

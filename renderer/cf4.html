@@ -171,6 +171,93 @@
   .save-note { font-size: 11.5px; color: var(--text-sec); }
   .save-note.success { color: var(--success); }
   .save-note.error { color: var(--error); }
+
+  /* Tab interface */
+  .tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-base);
+  }
+  .tab-btn {
+    padding: 12px 20px;
+    background: transparent;
+    border: none;
+    color: var(--text-sec);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s ease;
+    letter-spacing: 0.3px;
+  }
+  .tab-btn:hover {
+    color: var(--text-pri);
+  }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-content {
+    display: none;
+  }
+  .tab-content.active {
+    display: block;
+  }
+
+  /* Automation section specific styles */
+  #transmittalsInput {
+    flex: 1;
+    resize: none;
+    width: 100%;
+  }
+  #transmittalsInput::placeholder { color: var(--text-sec); }
+  .input-wrapper { flex: 1; display: flex; min-height: 0; margin: 10px 0 8px 0; }
+
+  .bottom-row {
+    display: flex;
+    align-items: center;
+    padding: 0 2px 10px 2px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .bottom-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .bottom-row .count { margin-left: auto; }
+
+  #startBtn {
+    width: 100%;
+    padding: 12px;
+    font-size: 11pt;
+  }
+
+  #logBox {
+    height: 200px;
+    margin: 10px 0 14px 0;
+    flex: none;
+    overflow-y: auto;
+  }
+  #reportBox { height: 250px; margin: 10px 0 0 0; overflow-y: auto; white-space: pre; }
+
+  .progress-frame { padding: 10px 0 10px 0; }
+  .progress-track {
+    width: 100%;
+    height: 4px;
+    background: var(--bg-panel);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.2s ease;
+  }
+  .progress-fill.idle {
+    width: 100%;
+    background: var(--success);
+  }
 </style>
 </head>
 <body>
@@ -178,7 +265,7 @@
 
     <div class="titlebar">
       <span class="icon"><img src="../bot.ico" alt=""></span>
-      <span class="title">BEABOTS - CF4 AUTO ENCODE</span>
+      <span class="title">BEABOTS - CF4 AUTOMATION</span>
       <span class="spacer"></span>
       <div class="titlebar-btn" id="btnThemeToggle" title="Toggle theme">🌙</div>
       <div class="titlebar-btn" id="btnMinimize">─</div>
@@ -189,13 +276,56 @@
     <div class="page-header">
       <div class="glyph"><img src="../bot.ico" alt=""></div>
       <div class="title-block">
-        <div class="title-main">CF4 AUTO ENCODE — DEFAULT VALUES</div>
-        <div class="subtitle">Used for every patient whenever "Include Auto Encode CF4" is checked on the dashboard.</div>
+        <div class="title-main">CF4 AUTOMATION & SETTINGS</div>
+        <div class="subtitle">Run transmittal automation or edit CF4 encoding defaults</div>
       </div>
       <button class="btn-home" id="btnHome" title="Back to Home">🏠 Home</button>
     </div>
 
-    <div class="form-body">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="automation">▶ Automation</button>
+      <button class="tab-btn" data-tab="settings">⚙ Settings</button>
+    </div>
+
+    <!-- AUTOMATION TAB -->
+    <div id="automation" class="tab-content active">
+      <div class="form-body">
+        <div class="form-card">
+          <div class="section-label"><span>▸ CF4 AUTO MAPPING ( Input Transmittal Numbers )</span><div class="rule"></div></div>
+          <div class="input-wrapper card">
+            <textarea id="transmittalsInput" placeholder="One transmittal number per line..."></textarea>
+          </div>
+          <div class="bottom-row">
+            <label class="text-sec text-small">
+              <input type="checkbox" id="autoEncodeCf4" />
+              Include Auto Encode CF4
+            </label>
+            <span class="count text-sec text-small" id="countLabel">0 transmittals</span>
+          </div>
+          <button class="cyber-btn" id="startBtn" style="text-align:center; width:100%;">▶ START AUTOMATION</button>
+        </div>
+
+        <div class="form-card">
+          <div class="section-label"><span>▸ AUTOMATION LOGS</span><div class="rule"></div></div>
+          <div class="log-box" id="logBox"></div>
+        </div>
+
+        <div class="form-card">
+          <div class="section-label"><span>▸ SUMMARY REPORT</span><div class="rule"></div></div>
+          <div class="log-box" id="reportBox"></div>
+        </div>
+
+        <div class="progress-frame">
+          <div class="progress-track">
+            <div class="progress-fill idle" id="progressFill"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS TAB -->
+    <div id="settings" class="tab-content">
+      <div class="form-body">
 
       <div class="form-card">
         <div class="section-label"><span>▸ REASON FOR ADMISSION</span><div class="rule"></div></div>
@@ -236,7 +366,6 @@
         </div>
         <div class="hint">Added once per session date read from CF2 (same text every time).</div>
       </div>
-
     </div>
 
     <div class="footer-bar">
@@ -251,6 +380,7 @@
 
   <div id="modalRoot"></div>
 
+  <script src="../node_modules/socket.io-client/dist/socket.io.min.js"></script>
   <script src="js/common.js"></script>
   <script src="js/cf4.js"></script>
 </body>
