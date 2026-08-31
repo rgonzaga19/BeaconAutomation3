@@ -4,7 +4,6 @@ import sys
 from datetime import datetime
 import openpyxl
 from cf2_mapper import build_cf2_data
-import browser_session
 import cf2_api
 from cf2_fees import get_fees
 from draft_automation import (
@@ -70,7 +69,6 @@ class TransmittalNotFoundError(Exception):
 class CF2Automation:
 
     def __init__(self, uploaded_excel_path=None, mode="new_draft"):
-        self.page = browser_session.connect()
         # Path to the workbook the user actually uploaded. Sheet2 (Billing
         # Clerk / Accountant name, contact no., official capacity) must be
         # read from THIS file, not from the bundled CF2_TEMPLATE_PATH.
@@ -87,9 +85,8 @@ class CF2Automation:
         # {"transmittal": ..., "patient_name": ..., "status": "success"/"skipped"/"failed", "message": ...}
         self.results = []
         # API-resolved IDs for the patient currently being processed.
-        # Existing-draft mode sets these without opening any Beacon page;
-        # new-draft mode still obtains them from the claim-details URL created
-        # by draft_automation until that separate flow is migrated.
+        # Both new-draft and existing-draft modes set these directly from API
+        # responses; no browser/page URL is involved.
         self._current_ids = None
 
     # ------------------------------------------------------------------
@@ -150,16 +147,12 @@ class CF2Automation:
     # Teardown — call this once after all patients are processed
     # ------------------------------------------------------------------
     def close(self):
-        """Persist the session (in case tokens rotated during the run) and
-        tear down the browser. Call this once, after the caller's loop over
-        process_patient() finishes — ideally from a try/finally so it still
-        runs if a patient-level error escapes process_patient()."""
-        try:
-            browser_session.save_session()
-        except Exception as e:
-            print(f"WARNING: Could not save session: {e}")
+        """Compatibility no-op.
 
-        browser_session.disconnect()
+        CF2 automation is API-only and owns no browser/page resources.
+        Existing callers may continue invoking close().
+        """
+        return None
 
     # ------------------------------------------------------------------
     # Excel lookup — "Prepared by" (Billing Clerk / Accountant) name
@@ -191,15 +184,12 @@ class CF2Automation:
         wb.close()
         return str(value).strip() if value is not None else ""
 
-    def _get_ids(self, page):
-        """Return the IDs for the patient currently being processed.
-
-        Both existing-draft and new-draft modes resolve these through APIs.
-        The first successful resolution is cached for the rest of this patient.
-        """
-        if self._current_ids is not None:
-            return self._current_ids
-        self._current_ids = cf2_api.extract_ids_from_url(page.url)
+    def _get_ids(self):
+        """Return API-resolved IDs for the patient currently being processed."""
+        if self._current_ids is None:
+            raise RuntimeError(
+                "Current transmittal/claim IDs were not resolved through the API."
+            )
         return self._current_ids
 
     # ------------------------------------------------------------------
@@ -228,45 +218,42 @@ class CF2Automation:
     # Main flow
     # ------------------------------------------------------------------
     def fill_cf2(self, data):
-        page = self.page
         self._current_ids = None
 
         if self.mode == "existing_draft":
-            self._locate_existing_draft(page, data)
+            self._locate_existing_draft(data)
         else:
-            # Draft creation intentionally remains browser-based. It is the next
-            # migration target and is kept unchanged in _create_draft().
-            self._create_draft(page, data)
+            self._create_draft(data)
 
         self._step(
             "Validating eligibility via API...",
-            lambda: self._validate_eligibility_via_api(page, data),
+            lambda: self._validate_eligibility_via_api(data),
             critical=False,
         )
 
-        self._add_discharge_diagnosis(page)
-        self._add_surgical_procedure(page, data)
-        self._add_doctor(page, data)
+        self._add_discharge_diagnosis()
+        self._add_surgical_procedure(data)
+        self._add_doctor(data)
 
-        if not self._fill_and_save_cf2(page, data, persist_session_dates=True):
+        if not self._fill_and_save_cf2(data, persist_session_dates=True):
             raise RuntimeError(
                 "Could not persist CF2/session dates through EditPHICCF2 API."
             )
 
-        ids = self._get_ids(page)
+        ids = self._get_ids()
         self._step(
             "Tagging Surgical Procedure as 1st Case Rate via API...",
-            lambda: self._tag_first_case_via_api(page, ids, data),
+            lambda: self._tag_first_case_via_api(ids, data),
             critical=True,
         )
 
         # Keep the second save from the proven flow. It writes the final CF2
         # values after case-rate tagging without changing the established logic.
-        if not self._fill_and_save_cf2(page, data):
+        if not self._fill_and_save_cf2(data):
             raise RuntimeError("Could not save CF2 through EditPHICCF2 API.")
 
-        self._diagnose_session_date_backend(page, data, "AFTER CF2 SAVE")
-        self._fill_statement_of_account(page, data)
+        self._diagnose_session_date_backend(data, "AFTER CF2 SAVE")
+        self._fill_statement_of_account(data)
 
         print("SUCCESS: CF2 completed for this patient.")
         return "success", "CF2 completed successfully."
@@ -274,25 +261,21 @@ class CF2Automation:
     # ------------------------------------------------------------------
     # Steps
     # ------------------------------------------------------------------
-    def _create_draft(self, page, data):
+    def _create_draft(self, data):
         """
         Creates the Beacon transmittal (Create Draft) and runs Add Claims
         for this patient's Member PIN, admission date (= first treatment
         date) and discharge date (= last treatment date), with an
-        auto-generated draft title. Once this finishes, Beacon leaves the
-        browser sitting directly on the PHIC Claims Details page (CF1/CF2
-        tabs, admission/discharge dates pre-filled) — confirmed via a live
-        test run — so fill_cf2() continues straight into the CF2 fields
-        below it, without needing any of the three legacy navigation
-        methods further down (_open_and_search_transmittal,
-        _open_manage_claims, _open_patient).
+        auto-generated draft title. The API response supplies the generated
+        transmittal/claim IDs directly, so fill_cf2() continues without any
+        browser navigation or URL parsing.
         """
         admission_date = data.first_treatment.strftime("%m/%d/%Y")
         discharge_date = data.last_treatment.strftime("%m/%d/%Y")
         draft_title = build_draft_title(data.patient_name, data.first_treatment, data.last_treatment)
 
         result = run_create_draft_flow(
-            page, data.member_pin, admission_date, discharge_date, draft_title
+            None, data.member_pin, admission_date, discharge_date, draft_title
         )
         self._current_ids = {
             "transmittal_id": int(result["transmittal_id"]),
@@ -309,7 +292,7 @@ class CF2Automation:
     # a freshly-created draft. One transmittal maps to exactly one
     # patient, so grabbing the first (only) row at each step is correct.
     # ------------------------------------------------------------------
-    def _locate_existing_draft(self, page, data):
+    def _locate_existing_draft(self, data):
         """Resolve an existing draft through Beacon APIs only.
 
         Selection logic is intentionally unchanged: search using
@@ -340,9 +323,9 @@ class CF2Automation:
 
 
 
-    def _validate_eligibility_via_api(self, page, data):
-        """Run Beacon's Validate Eligibility workflow without Playwright UI actions."""
-        ids = self._get_ids(page)
+    def _validate_eligibility_via_api(self, data):
+        """Run Beacon's Validate Eligibility workflow through APIs only."""
+        ids = self._get_ids()
         result = cf2_api.validate_claim_eligibility(
             claim_id=ids["claim_id"],
             transmittal_id=ids["transmittal_id"],
@@ -363,7 +346,7 @@ class CF2Automation:
         return True
 
 
-    def _fill_and_save_cf2(self, page, data, persist_session_dates=False):
+    def _fill_and_save_cf2(self, data, persist_session_dates=False):
         """
         Saves the CF2 record through the confirmed API path
         (_fill_referral_and_accommodation, _fill_disposition_and_diagnosis,
@@ -384,7 +367,7 @@ class CF2Automation:
         Returns True on success and False if the API save fails.
         """
         try:
-            ids = self._get_ids(page)
+            ids = self._get_ids()
             cf2_record = cf2_api.get_cf2(ids["claim_id"])
             if not cf2_record:
                 raise cf2_api.Cf2ApiError(
@@ -531,8 +514,8 @@ class CF2Automation:
 
 
 
-    def _add_discharge_diagnosis(self, page):
-        ids = self._get_ids(page)
+    def _add_discharge_diagnosis(self):
+        ids = self._get_ids()
         existing = cf2_api.get_discharge_diagnoses(ids["claim_id"])
         if existing:
             print("Discharge Diagnosis already exists (via API) - skipping.")
@@ -549,8 +532,8 @@ class CF2Automation:
 
 
 
-    def _add_surgical_procedure(self, page, data):
-        ids = self._get_ids(page)
+    def _add_surgical_procedure(self, data):
+        ids = self._get_ids()
         existing = cf2_api.get_surgical_procedures(ids["claim_id"])
         if existing:
             print("Surgical Procedure already exists (via API) - skipping creation.")
@@ -593,7 +576,7 @@ class CF2Automation:
         except ValueError:
             return text[:10]
 
-    def _diagnose_session_date_backend(self, page, data, stage):
+    def _diagnose_session_date_backend(self, data, stage):
         """Best-effort diagnostic: print Beacon's persisted sessionDate.
 
         This deliberately does not modify anything. It distinguishes a
@@ -602,7 +585,7 @@ class CF2Automation:
         operation wipes the session date.
         """
         try:
-            ids = self._get_ids(page)
+            ids = self._get_ids()
             procedures = cf2_api.get_surgical_procedures(ids["claim_id"])
             print(f"===== SESSION DATE BACKEND DIAGNOSTIC: {stage} =====")
             if not procedures:
@@ -654,7 +637,7 @@ class CF2Automation:
                 f"WARNING: Session date backend diagnostic failed at {stage}: {e}"
             )
 
-    def _tag_first_case_via_api(self, page, ids, data):
+    def _tag_first_case_via_api(self, ids, data):
         """Tag the hemodialysis Surgical Procedure as 1st Case Rate via API.
 
         Multi-session behavior is confirmed by HAR: one NewPHICAllCaseRate
@@ -697,7 +680,7 @@ class CF2Automation:
                     f"SearchCaseRates returned no case rates for 90935 / {target_date_str}."
                 )
 
-            self._diagnose_session_date_backend(page, data, "BEFORE 1ST CASE TAG")
+            self._diagnose_session_date_backend(data, "BEFORE 1ST CASE TAG")
             cf2_api.tag_first_case(
                 ids["claim_id"], surgical_procedure, caserates[0], data.session_dates
             )
@@ -712,7 +695,7 @@ class CF2Automation:
                 s.get("sessionDate") for s in sessions_after[:len(expected_dates)]
             ]
             normalized_after = [self._normalize_backend_session_date(v) for v in actual_after]
-            self._diagnose_session_date_backend(page, data, "AFTER 1ST CASE TAG")
+            self._diagnose_session_date_backend(data, "AFTER 1ST CASE TAG")
             if normalized_after != expected_dates:
                 raise RuntimeError(
                     f"1st Case Rate tagging changed/lost session dates: "
@@ -801,8 +784,8 @@ class CF2Automation:
 
 
 
-    def _add_doctor(self, page, data):
-        ids = self._get_ids(page)
+    def _add_doctor(self, data):
+        ids = self._get_ids()
         existing = cf2_api.get_doctors(ids["claim_id"])
         if existing:
             print("Doctor already exists (via API) - skipping creation.")
@@ -832,7 +815,7 @@ class CF2Automation:
     # Save CF2
     # --------------------------------------------------
 
-    def _fill_statement_of_account(self, page, data):
+    def _fill_statement_of_account(self, data):
         """Save the Statement of Account Signatories entirely through API.
 
         Signatories are populated and saved through the API. We first read the member mobile from CF1, then
@@ -841,7 +824,7 @@ class CF2Automation:
         it to Update-signatories, and finally GET the record again to verify
         the values persisted.
         """
-        ids = self._get_ids(page)
+        ids = self._get_ids()
         claim_id = ids["claim_id"]
 
 
