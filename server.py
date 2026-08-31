@@ -30,6 +30,7 @@ from flask_cors import CORS
 
 from openpyxl import load_workbook
 
+import browser_session
 from license import validate_license, LicenseError
 from login import load_login_settings, save_login_settings
 from logger import logger
@@ -249,14 +250,20 @@ def get_settings():
 @app.route("/api/settings", methods=["POST"])
 def post_settings():
     """
-    Body: {"username": ..., "password": ..., "access_key": ...}
-    save_login_settings() itself still owns the "clear session.json if credentials
-    changed" rule — untouched, unchanged from login.py.
+    Body: username, password, access key, and/or Beacon server settings.
+    Authentication is cached in memory, so discard it whenever the account
+    or selected Beacon environment changes.
     """
     data = request.get_json(force=True)
     settings = load_login_settings()
+    auth_changed = any(
+        key in data and data[key] != settings.get(key)
+        for key in ("username", "password", "server")
+    )
     settings.update(data)
     save_login_settings(settings)
+    if auth_changed:
+        browser_session.invalidate_auth_token()
     return jsonify(settings)
 
 

@@ -3,18 +3,15 @@ Direct HTTP client for a subset of Beacon's PHIC CF2 backend endpoints,
 discovered by capturing (HAR) a real CF2 encoding session in the browser
 and confirming the exact request/response shape for each call used here.
 
-This bypasses the Beacon UI entirely for the operations it covers - no
-Playwright involved - authenticating via the bearer token from
+This bypasses the Beacon UI and authenticates via the bearer token from
 browser_session.get_auth_token() (the same OAuth2 /token endpoint
 Beacon's own SIGN IN button uses, confirmed via an earlier HAR).
 
 Every function raises on a non-2xx response (via response.raise_for_status())
 so callers see a real, specific error instead of a generic timeout, and
 returns the parsed JSON body (or None for an empty response) on success.
-cf2_automation.py wraps every call site in try/except and falls back to
-the existing UI automation on failure, so a wrong assumption here (field
-name, required value, etc.) degrades to "no worse than before" rather
-than breaking a patient outright.
+cf2_automation.py handles endpoint failures as patient-level automation
+errors so one failed record does not abort the remaining batch.
 
 Covered here (confirmed via HAR, request AND response bodies inspected):
   - Claim eligibility validation: IsClaimEligible + EditPHICClaimEligibilityStatus
@@ -37,18 +34,8 @@ Covered here (confirmed via HAR, request AND response bodies inspected):
     intentionally NOT used as post-save verification because Beacon's
     response does not echo those rendered PDF fields after a successful save.
 
-Deliberately NOT covered here (still pure UI automation in
-cf2_automation.py) because we don't have a captured/confirmed endpoint,
-or the capture was incomplete:
-  - Draft creation / Add Claims / Member PIN validation
-    (draft_automation.py's own flow - has its own set of endpoints we
-    haven't dumped the request/response bodies for yet)
-  - The main CF2 field save (EditPHICCF2) - the captured request body
-    was cut off mid-JSON, so we don't have full certainty about every
-    field Beacon expects back unchanged (newborn care, TB DOTS, animal
-    bite, cataract sections, etc. all live in this same record).
-    Blindly submitting a payload built from scratch risks wiping fields
-    this migration doesn't know about.
+Draft creation and the main CF2 save are implemented by the dedicated API
+orchestration modules rather than browser automation.
 """
 
 import re
@@ -65,8 +52,7 @@ ECLAIMS_API_BASE = "https://eclaimsapi-s4.azurewebsites.net/api/EClaims/v3"
 class Cf2ApiError(Exception):
     """Raised for any cf2_api failure that isn't already a requests
     exception (e.g. missing auth token, unexpected response shape).
-    Callers should treat this the same as any other exception here:
-    catch it and fall back to UI automation."""
+    Callers should treat this the same as any other API exception."""
     pass
 
 
@@ -77,10 +63,7 @@ def _base_url():
 def _headers():
     token = browser_session.get_auth_token()
     if not token:
-        raise Cf2ApiError(
-            "No API auth token available - caller should fall back to "
-            "UI automation."
-        )
+        raise Cf2ApiError("No API auth token available.")
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -165,9 +148,7 @@ def extract_ids_from_url(page_url):
     used the identical number in the captured session), so this returns
     one id for both purposes.
 
-    Raises Cf2ApiError if the URL doesn't match this pattern - callers
-    should treat that as "API path unavailable, fall back to UI" like
-    any other failure here.
+    Raises Cf2ApiError if the URL doesn't match this pattern.
     """
     match = re.search(r"/phic-claims-details/(\d+)/[^/]+/(\d+)", page_url)
     if not match:
@@ -390,10 +371,7 @@ def get_client_id():
 
     user_id = browser_session.get_user_id()
     if not user_id:
-        raise Cf2ApiError(
-            "No userId available (get_user_id() failed) - caller "
-            "should fall back to UI automation."
-        )
+        raise Cf2ApiError("No userId available (get_user_id() failed).")
 
     clients = _get(
         "/api/Account/GetAllClientsByUserId", params={"userId": user_id}

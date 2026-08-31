@@ -43,10 +43,8 @@ Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription:
 
 [Files]
 ; release\win-unpacked is electron-builder's output (npm run dist), which
-; already contains resources\server\ — server.exe, ms-playwright, and
-; templates — bundled automatically via package.json's extraResources
-; config, as long as ms-playwright was pasted into python-build\server\
-; before running npm run dist.
+; already contains resources\server\ — server.exe, its Python runtime,
+; and templates — bundled automatically via package.json's extraResources.
 Source: "release\win-unpacked\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
