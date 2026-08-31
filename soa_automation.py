@@ -193,6 +193,41 @@ def _find_soa_file(patient_name, soa_folder):
     return matches[0]
 
 
+def _clear_editable_summary_fields(summary):
+    """Clear editable SOA fields before retyping calculated values.
+
+    Beacon can retain an old Senior/PWD discount from a previous pass.  Mirror
+    the UI's "clear textbox first, then type" behavior through UpdateSummary:
+
+    - Facility fee rows: clear both editable discount boxes.
+      actualCharges is Beacon/import-populated and is intentionally preserved.
+    - First professional-fee row: clear the editable actualCharges box and
+      both discount boxes, because this automation retypes those values.
+
+    UpdateSummary's model expects these editable money fields to be numeric;
+    Beacon's browser payload uses 0 for a cleared field, not an empty string.
+
+    Other server/autofilled fields are left exactly as returned by GetSummary.
+    """
+    fees = summary.get("feesSummary") or []
+
+    for row in fees[:6]:
+        # UpdateSummary binds these as numeric fields. The browser's successful
+        # payload represents an empty/cleared discount as numeric 0, not "".
+        row["seniorCitizenDiscount"] = 0
+        row["pwdDiscount"] = 0
+
+    professional = summary.get("professionalFees") or []
+    if professional:
+        # Doctor actualCharges is editable too, so clear it before retyping
+        # the mapped PF amount.  Use numeric zero for the same API-model reason.
+        professional[0]["actualCharges"] = 0
+        professional[0]["seniorCitizenDiscount"] = 0
+        professional[0]["pwdDiscount"] = 0
+
+    return summary
+
+
 class SOAAutomation:
     """API-only Statement of Account automation."""
 
@@ -366,6 +401,19 @@ class SOAAutomation:
             # Preserve the proven discount rules exactly.
             # Always refresh after a possible fresh import so actualCharges
             # are never taken from the pre-import state check.
+            summary = soa_api.get_summary(claim_id) or {}
+
+            # First clear every editable field this automation is responsible
+            # for. This removes stale Senior/PWD discounts (and an old PF
+            # amount) before the current patient's values are retyped.
+            logger.info(
+                "Clearing editable SOA fields before retyping discounts..."
+            )
+            clear_payload = _clear_editable_summary_fields(summary)
+            soa_api.update_summary(clear_payload)
+
+            # Re-fetch after the clear so the calculation starts from Beacon's
+            # persisted clean state while retaining all server/autofilled data.
             summary = soa_api.get_summary(claim_id) or {}
             fees = summary.get("feesSummary") or []
 
