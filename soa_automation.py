@@ -193,6 +193,79 @@ def _find_soa_file(patient_name, soa_folder):
     return matches[0]
 
 
+def _fix_others_unit_mapping(claim_id):
+    """Set every XLSO row mapped as Others to PHIC unit PIECE.
+
+    The recorded Beacon edit flow uses EditPHICChargesXLSO and sends unitCode
+    for PIECE together with unitDescription="PIECE".  There can be multiple
+    "Others" rows, so every matching XLSO charge is updated.
+    """
+    _, xlso_rows = soa_api.get_charges(claim_id)
+
+    matching_rows = [
+        row
+        for row in xlso_rows
+        if str(row.get("itemName") or "").strip().casefold() == "others"
+    ]
+
+    if not matching_rows:
+        logger.info(
+            "No XLSO PhilHealth Mapping='Others' rows found — "
+            "no unit mapping change needed."
+        )
+        return 0
+
+    units = soa_api.get_phic_units()
+    piece = next(
+        (
+            unit for unit in units
+            if str(unit.get("description") or "").strip().upper() == "PIECE"
+        ),
+        None,
+    )
+
+    if not piece:
+        raise Exception("PHIC unit PIECE was not returned by Beacon")
+
+    unit_code = str(piece.get("code") or piece.get("id") or "").strip()
+    if not unit_code:
+        raise Exception("PHIC unit PIECE has no usable code")
+
+    updated = 0
+
+    for row in matching_rows:
+        payload = dict(row)
+
+        # Preserve the existing row and change only what the edit dialog changes
+        # for the requested PhilHealth unit mapping.
+        payload["unitCode"] = unit_code
+        payload["unitDescription"] = "PIECE"
+
+        # The successful browser edit payload carries these fields when the
+        # PhilHealth mapping is Others. Keep them normalized if absent/null.
+        payload["itemName"] = "Others"
+        payload["searchText"] = "Others"
+        payload["philhealthItemId"] = payload.get("philhealthItemId") or ""
+        payload["oecbCategory"] = payload.get("oecbCategory") or ""
+
+        saved = soa_api.edit_xlso_charge(payload)
+        if not saved:
+            raise Exception(
+                f"Failed to save XLSO Others row id={row.get('id')}"
+            )
+
+        updated += 1
+        logger.success(
+            "Updated XLSO Others row "
+            f"id={row.get('id')} -> PhilHealth unit PIECE"
+        )
+
+    logger.success(
+        f"XLSO Others unit mapping updated on {updated} row(s)."
+    )
+    return updated
+
+
 def _clear_editable_summary_fields(summary):
     """Clear editable SOA fields before retyping calculated values.
 
@@ -377,6 +450,10 @@ class SOAAutomation:
                     self.soa_file,
                     claim_id,
                 )
+
+                # Immediately after a fresh SOA upload, normalize every XLSO
+                # row whose PhilHealth Mapping is "Others" to unit PIECE.
+                _fix_others_unit_mapping(claim_id)
 
                 result["message"] = "SOA uploaded successfully"
             else:

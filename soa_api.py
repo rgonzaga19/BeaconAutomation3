@@ -302,6 +302,27 @@ def batch_upload_xlso(claim_id, rows):
         json=payload,
         timeout=60,
     ))
+def get_phic_units():
+    """Return Beacon's PHIC unit list used by the XLSO edit dialog."""
+    data = _json(requests.get(
+        BASE_URL + "/api/PHICEsoa/GetPHICUnits",
+        headers=_headers(),
+        params={"search": "undefined"},
+        timeout=30,
+    )) or []
+    return data if isinstance(data, list) else []
+
+
+def edit_xlso_charge(row):
+    """Save one existing XLSO row using the endpoint captured from Beacon."""
+    return _json(requests.put(
+        BASE_URL + "/api/PHICChargesXLSOController/EditPHICChargesXLSO",
+        headers=_headers(),
+        json=row,
+        timeout=30,
+    ))
+
+
 def get_summary(claim_id):
     return _json(requests.get(BASE_URL+"/api/PHICEsoa/GetSummary",headers=_headers(),params={"PHICClaimId":claim_id},timeout=30))
 def update_summary(payload):
