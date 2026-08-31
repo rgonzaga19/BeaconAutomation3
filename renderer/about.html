@@ -117,16 +117,6 @@
         <div class="titlebar-btn" id="btnTitlebarClose">✕</div>
     </div>
 
-    <!-- ================= Page header ================= -->
-    <div class="page-header">
-        <div class="glyph"><img src="../bot.ico" alt=""></div>
-        <div class="title-block">
-            <div class="title">BEABOTS</div>
-            <div class="subtitle">Desktop automation for PhilHealth Beacon claims &middot; <span id="version">Version ...</span></div>
-        </div>
-        <button class="btn-home" id="btnHome" title="Back to Home">🏠 Home</button>
-    </div>
-
     <div class="forced-banner" id="forcedBanner">
         ⚠ A required update is available. Please install it to continue using Beabots.
     </div>
@@ -156,6 +146,11 @@
                     </div>
 
                     <div class="info-grid">
+
+                        <div class="info-row">
+                            <div class="label">Current Version</div>
+                            <div class="value" id="version">Loading...</div>
+                        </div>
 
                         <div class="info-row">
                             <div class="label">Developer</div>
@@ -261,6 +256,10 @@
                         Checking for updates...
                     </div>
 
+                    <button id="btnDownload" class="solid-btn update-action">
+                        Download Update
+                    </button>
+
                     <div id="downloadSection" class="download-section" style="display:none;">
 
                         <div id="downloadText" class="label">
@@ -287,20 +286,6 @@
             </div>
 
         </div>
-
-    </div>
-
-    <!-- ================= Buttons ================= -->
-
-    <div class="buttons">
-
-        <button id="btnDownload" class="solid-btn">
-            Download Update
-        </button>
-
-        <button id="btnClose" class="cyber-btn">
-            Close
-        </button>
 
     </div>
 

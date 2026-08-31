@@ -29,6 +29,8 @@ const workspaceViews = {
   cf2: null,
   uploadSoa: null,
   cf4: null,
+  about: null,
+  settings: null,
 };
 const WORKSPACE_TOP = 97; // custom titlebar (34) + dashboard toolbar (63)
 let workspaceSidebarWidth = 232;
@@ -172,9 +174,17 @@ function makeLineForwarder(level) {
       const line = rawLine.replace(/\r$/, "");
       if (!line) continue;
 
+      // Werkzeug sends all access records to stderr. Successful HTTP
+      // requests are routine traffic, not application errors.
+      const accessMatch = line.match(/"\s(\d{3})\s(?:-|\d+)/);
+      const statusCode = accessMatch ? Number(accessMatch[1]) : null;
+      const effectiveLevel = level === "error" && statusCode !== null && statusCode < 400
+        ? "info"
+        : level;
+
       // Still print to the main-process console too — free in dev mode
       // (running `electron .` from a terminal) and harmless otherwise.
-      if (level === "error") {
+      if (effectiveLevel === "error") {
         console.error(`[server] ${line}`);
       } else {
         console.log(`[server] ${line}`);
@@ -182,12 +192,12 @@ function makeLineForwarder(level) {
 
       try {
         const ts = new Date().toISOString();
-        getLogStream().write(`[${ts}] [${level}] ${line}\n`);
+        getLogStream().write(`[${ts}] [${effectiveLevel}] ${line}\n`);
       } catch (e) {
         // Logging failure shouldn't be fatal to the app itself.
       }
 
-      broadcastServerLog(level, line);
+      broadcastServerLog(effectiveLevel, line);
     }
   };
 }
@@ -679,14 +689,12 @@ function createCf4Window() {
 // from the dashboard. It's deliberately NOT exclusive — it's the one window
 // allowed to stay open alongside the dashboard.
 function createSettingsWindow() {
-  return createWindow("settings", "login.html", {
-    width: 380,
-    height: 390,
-    resizable: false,
-  });
+  return showWorkspacePage("settings", "settings.html");
 }
 
 function createAboutWindow(forced = false) {
+  if (!forced) return showWorkspacePage("about", "about.html");
+
   const win = createWindow("about", "about.html", {
     width: 860,
     height: 680,
@@ -802,7 +810,11 @@ ipcMain.handle("workspace:setSidebarWidth", (event, width) => {
 });
 
 ipcMain.handle("workspace:home", (event) => {
-  if (event.sender !== windows.dashboard?.webContents) return;
+  const fromDashboard = event.sender === windows.dashboard?.webContents;
+  const fromWorkspace = Object.values(workspaceViews).some((view) =>
+    view && !view.webContents.isDestroyed() && view.webContents === event.sender
+  );
+  if (!fromDashboard && !fromWorkspace) return;
   hideWorkspacePage();
 });
 

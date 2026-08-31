@@ -8,6 +8,7 @@
 <style>
   .toolbar { display:flex; align-items:center; padding:12px 18px; gap:8px; border-bottom:1px solid var(--border); }
   .toolbar .push-right { margin-left:auto; display:flex; gap:8px; }
+  .toolbar .cyber-btn.active { color:var(--text-pri); background:var(--accent-soft-strong); border-color:var(--accent); }
   .menu-toggle { width:40px; height:38px; display:inline-flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:0; background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-md); cursor:pointer; transition:background 140ms ease,border-color 140ms ease; }
   .menu-toggle:hover { background:var(--accent-soft); border-color:var(--accent); }
   .menu-toggle span { width:17px; height:2px; border-radius:2px; background:var(--text-pri); transition:transform 160ms ease,opacity 120ms ease; }
@@ -87,6 +88,7 @@
           <button class="side-link" id="btnCf2" type="button" title="Claim Form 2"><span class="side-icon" aria-hidden="true">➜</span><span class="side-label">Claim Form 2</span></button>
           <button class="side-link" id="btnUploadSoa" type="button" title="Auto Upload SOA"><span class="side-icon" aria-hidden="true">⇧</span><span class="side-label">Auto Upload SOA</span></button>
           <button class="side-link" id="btnCf4" type="button" title="Claim Form 4"><span class="side-icon" aria-hidden="true">▤</span><span class="side-label">Claim Form 4</span></button>
+          <button class="side-link" id="btnSettings" type="button" title="Settings"><span class="side-icon" aria-hidden="true">⚙</span><span class="side-label">Settings</span></button>
         </nav>
         <div class="sidebar-bottom"><button class="side-link" id="btnLogout" type="button" title="Log out"><span class="side-icon" aria-hidden="true">↪</span><span class="side-label">Log out</span></button></div>
       </aside>

@@ -9,7 +9,6 @@ const releaseNotesEl = document.getElementById("releaseNotes");
 
 
 const btnDownload = document.getElementById("btnDownload");
-const btnClose = document.getElementById("btnClose");
 const btnTitlebarClose = document.getElementById("btnTitlebarClose");
 
 const downloadSection = document.getElementById("downloadSection");
@@ -47,11 +46,8 @@ window.beabots.onUpdateProgress((data) => {
     downloadPercent.textContent =
         `${data.percent}% (${downloadedMB} MB / ${totalMB} MB)`;
 
-    // Mirror the percentage onto the button itself. The detailed progress
-    // bar lives inside the scrollable content area and can end up off-screen
-    // (e.g. if the left column pushes the panel taller than the window), but
-    // this button sits in the footer, which is always visible, so the user
-    // never loses track of an in-progress download.
+    // Mirror the percentage onto the update action as well as the detailed
+    // progress display in the same Application Updates panel.
     if (data.percent < 100) {
         btnDownload.textContent = `⬇ Downloading... ${data.percent}%`;
     }
@@ -232,19 +228,6 @@ document.getElementById("btnHome")?.addEventListener("click", () => {
 // close this window — it exits the app entirely. This is the only way out
 // if the user picks "Install Later" after downloading. Relaunching will
 // re-trigger this same locked screen until they actually install.
-if (forcedMode) {
-    btnClose.textContent = "Exit App";
-    btnClose.title = "Quit Beabots";
-}
-
-btnClose.addEventListener("click", () => {
-    if (forcedMode) {
-        window.beabots?.quitApp?.();
-        return;
-    }
-    window.close();
-});
-
 btnTitlebarClose.addEventListener("click", () => {
     if (forcedMode) {
         window.beabots?.quitApp?.();

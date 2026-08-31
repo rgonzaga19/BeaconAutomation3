@@ -596,19 +596,18 @@ function showReport(results) {
 // ---------------------------------------------------------------------------
 // AUTOMATION: Status and controls
 // ---------------------------------------------------------------------------
-const progressFill = document.getElementById("progressFill");
 const startBtn = document.getElementById("startBtn");
 
 function disableControls() {
   startBtn.disabled = true;
   transmittalsInput.disabled = true;
-  progressFill.classList.remove("idle");
+  startBtn.classList.add("running");
 }
 
 function enableControls() {
   startBtn.disabled = false;
   transmittalsInput.disabled = false;
-  progressFill.classList.add("idle");
+  startBtn.classList.remove("running");
 }
 
 // ---------------------------------------------------------------------------

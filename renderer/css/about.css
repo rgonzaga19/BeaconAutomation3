@@ -272,15 +272,7 @@
     color: var(--text-sec);
 }
 
-/* ---------- Bottom action bar ---------- */
-.buttons {
-    display: flex;
-    gap: 12px;
-    padding: 14px 24px;
-    border-top: 1px solid var(--border);
-    background: var(--bg-panel);
-}
-
 #btnDownload {
-    margin-right: auto;
+    align-self: flex-start;
+    margin: 14px 14px 18px;
 }

@@ -202,14 +202,42 @@
 
   .tab-content {
     display: none;
+    min-height: 0;
   }
   .tab-content.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
   }
 
   /* Automation section specific styles */
+  #automation .form-body {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(0, 4fr);
+    gap: 14px;
+    align-items: stretch;
+    overflow-y: auto;
+  }
+  #automation .form-card { min-width: 0; min-height: 0; margin-bottom: 0; }
+  #automation .form-card:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    min-height: 500px;
+    display: flex;
+    flex-direction: column;
+  }
+  #automation .form-card:nth-child(2),
+  #automation .form-card:nth-child(3) {
+    grid-column: 2;
+    display: flex;
+    flex-direction: column;
+  }
+  #automation .form-card:nth-child(2) { grid-row: 1; min-height: 220px; }
+  #automation .form-card:nth-child(3) { grid-row: 2; min-height: 220px; }
   #transmittalsInput {
     flex: 1;
+    min-height: 300px;
     resize: none;
     width: 100%;
   }
@@ -231,32 +259,36 @@
     padding: 12px;
     font-size: 11pt;
   }
+  @property --cf4-border-angle {
+    syntax: "<angle>";
+    initial-value: 0deg;
+    inherits: false;
+  }
+  #startBtn.running {
+    --cf4-border-angle: 0deg;
+    border: 2px solid transparent;
+    background:
+      linear-gradient(var(--bg-panel), var(--bg-panel)) padding-box,
+      conic-gradient(from var(--cf4-border-angle), transparent 0 62%, var(--accent) 78%, transparent 94%) border-box;
+    color: var(--text-pri);
+    opacity: 1;
+    animation: cf4-border-spin 900ms linear infinite;
+  }
+  @keyframes cf4-border-spin { to { --cf4-border-angle: 360deg; } }
 
   #logBox {
-    height: 200px;
+    height: auto;
+    min-height: 150px;
     margin: 10px 0 14px 0;
-    flex: none;
+    flex: 1;
     overflow-y: auto;
   }
-  #reportBox { height: 250px; margin: 10px 0 0 0; overflow-y: auto; white-space: pre; }
+  #reportBox { height: auto; min-height: 150px; flex: 1; margin: 10px 0 0 0; overflow: auto; white-space: pre; }
 
-  .progress-frame { padding: 10px 0 10px 0; }
-  .progress-track {
-    width: 100%;
-    height: 4px;
-    background: var(--bg-panel);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%;
-    background: var(--accent);
-    width: 0%;
-    transition: width 0.2s ease;
-  }
-  .progress-fill.idle {
-    width: 100%;
-    background: var(--success);
+  @media (max-width: 900px) {
+    #automation .form-body { grid-template-columns: 1fr; }
+    #automation .form-card:nth-child(n) { grid-column: 1; grid-row: auto; }
+    #automation .form-card:nth-child(1) { min-height: 430px; }
   }
 </style>
 </head>
@@ -290,7 +322,7 @@
     <div id="automation" class="tab-content active">
       <div class="form-body">
         <div class="form-card">
-          <div class="section-label"><span>▸ CF4 AUTO MAPPING ( Input Transmittal Numbers )</span><div class="rule"></div></div>
+          <div class="section-label"><span>▸ Input Transmittal Numbers:</span><div class="rule"></div></div>
           <div class="input-wrapper card">
             <textarea id="transmittalsInput" placeholder="One transmittal number per line..."></textarea>
           </div>
@@ -314,11 +346,6 @@
           <div class="log-box" id="reportBox"></div>
         </div>
 
-        <div class="progress-frame">
-          <div class="progress-track">
-            <div class="progress-fill idle" id="progressFill"></div>
-          </div>
-        </div>
       </div>
     </div>
 

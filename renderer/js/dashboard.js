@@ -31,6 +31,8 @@ const workspaceButtons = {
   cf2: document.getElementById("btnCf2"),
   uploadSoa: document.getElementById("btnUploadSoa"),
   cf4: document.getElementById("btnCf4"),
+  settings: document.getElementById("btnSettings"),
+  about: document.getElementById("btnAbout"),
 };
 
 window.beabots?.onWorkspaceActive((activeKey) => {
@@ -52,6 +54,9 @@ document.getElementById("btnUploadSoa").addEventListener("click", () => {
 });
 document.getElementById("btnCf4").addEventListener("click", () => {
   window.beabots?.openCf4Window();
+});
+document.getElementById("btnSettings").addEventListener("click", () => {
+  window.beabots?.openSettingsWindow();
 });
 document.getElementById("btnLogout").addEventListener("click", () => {
   window.beabots?.logout();
