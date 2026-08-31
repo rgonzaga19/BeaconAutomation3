@@ -1,6 +1,5 @@
 /*
- * Dashboard renderer logic - simplified navigation only.
- * Shows a welcome screen with quick navigation to CF4, CF2, Upload SOA, and About.
+ * Dashboard renderer logic for the collapsible navigation workspace.
  */
 
 // API_BASE, fetchJSON, showModal, and showError all live in common.js (loaded before this file).
@@ -10,9 +9,6 @@
 // ---------------------------------------------------------------------------
 document.getElementById("btnMinimize").addEventListener("click", () => {
   window.beabots?.minimize();
-});
-document.getElementById("btnMaximize").addEventListener("click", () => {
-  window.beabots?.maximize();
 });
 document.getElementById("btnClose").addEventListener("click", () => {
   window.beabots?.close();
@@ -28,6 +24,24 @@ sidebarToggle.addEventListener("click", () => {
   const collapsed = sidebar.classList.toggle("collapsed");
   sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
   sidebarToggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+  window.beabots?.setWorkspaceSidebarWidth(collapsed ? 68 : 232);
+});
+
+const workspaceButtons = {
+  cf2: document.getElementById("btnCf2"),
+  uploadSoa: document.getElementById("btnUploadSoa"),
+  cf4: document.getElementById("btnCf4"),
+};
+
+window.beabots?.onWorkspaceActive((activeKey) => {
+  Object.entries(workspaceButtons).forEach(([key, button]) => {
+    button.classList.toggle("active", key === activeKey);
+    button.setAttribute("aria-current", key === activeKey ? "page" : "false");
+  });
+});
+
+document.getElementById("btnDashboardHome").addEventListener("click", () => {
+  window.beabots?.showWorkspaceHome();
 });
 
 document.getElementById("btnCf2").addEventListener("click", () => {

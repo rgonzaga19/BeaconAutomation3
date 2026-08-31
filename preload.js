@@ -25,6 +25,12 @@ contextBridge.exposeInMainWorld("beabots", {
   goHome: () => ipcRenderer.invoke("nav:goHome"),
   goToDashboard: () => ipcRenderer.invoke("nav:goToDashboard"),
   logout: () => ipcRenderer.invoke("nav:logout"),
+  setWorkspaceSidebarWidth: (width) => ipcRenderer.invoke("workspace:setSidebarWidth", width),
+  showWorkspaceHome: () => ipcRenderer.invoke("workspace:home"),
+  onWorkspaceActive: (callback) => {
+    ipcRenderer.removeAllListeners("workspace:active");
+    ipcRenderer.on("workspace:active", (_event, key) => callback(key));
+  },
   releaseForceLock: () => ipcRenderer.invoke("app:releaseForceLock"),
   quitApp: () => ipcRenderer.invoke("app:quitApp"),
 

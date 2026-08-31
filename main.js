@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, WebContentsView, ipcMain, dialog, shell, screen } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -21,6 +21,89 @@ const windows = {
   settings: null,
   about: null,
 };
+
+// In-dashboard automation pages. These are WebContentsViews attached to the
+// dashboard BrowserWindow, so they read as pages in one application rather
+// than separate operating-system windows.
+const workspaceViews = {
+  cf2: null,
+  uploadSoa: null,
+  cf4: null,
+};
+const WORKSPACE_TOP = 97; // custom titlebar (34) + dashboard toolbar (63)
+let workspaceSidebarWidth = 232;
+let activeWorkspaceKey = null;
+
+function layoutWorkspaceView() {
+  const dash = windows.dashboard;
+  const view = activeWorkspaceKey && workspaceViews[activeWorkspaceKey];
+  if (!dash || dash.isDestroyed() || !view) return;
+  const [width, height] = dash.getContentSize();
+  view.setBounds({
+    x: workspaceSidebarWidth,
+    y: WORKSPACE_TOP,
+    width: Math.max(1, width - workspaceSidebarWidth),
+    height: Math.max(1, height - WORKSPACE_TOP),
+  });
+}
+
+function createWorkspaceView(key, htmlFile) {
+  const existing = workspaceViews[key];
+  if (existing && !existing.webContents.isDestroyed()) return existing;
+
+  const view = new WebContentsView({
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  view.setBackgroundColor("#00000000");
+  view.setVisible(false);
+  view.webContents.loadFile(path.join(__dirname, "renderer", htmlFile), {
+    search: "embedded=1",
+  });
+  view.webContents.once("did-finish-load", () => {
+    // The dashboard supplies the window chrome. Removing the page's own
+    // titlebar and rounded outer edge makes the view meet the shell cleanly.
+    view.webContents.insertCSS(`
+      .titlebar { display: none !important; }
+      .app-window { border-radius: 0 !important; }
+      .app-window::after { display: none !important; }
+    `);
+  });
+  workspaceViews[key] = view;
+  return view;
+}
+
+function showWorkspacePage(key, htmlFile) {
+  const dash = windows.dashboard || createDashboardWindow();
+  if (!dash || dash.isDestroyed()) return null;
+
+  Object.entries(workspaceViews).forEach(([viewKey, view]) => {
+    if (view && !view.webContents.isDestroyed()) view.setVisible(viewKey === key);
+  });
+
+  const view = createWorkspaceView(key, htmlFile);
+  if (!dash.contentView.children.includes(view)) dash.contentView.addChildView(view);
+  activeWorkspaceKey = key;
+  view.setVisible(true);
+  layoutWorkspaceView();
+  if (!dash.isVisible()) dash.show();
+  if (dash.isMinimized()) dash.restore();
+  dash.focus();
+  dash.webContents.send("workspace:active", key);
+  return view;
+}
+
+function hideWorkspacePage() {
+  Object.values(workspaceViews).forEach((view) => {
+    if (view && !view.webContents.isDestroyed()) view.setVisible(false);
+  });
+  activeWorkspaceKey = null;
+  windows.dashboard?.webContents.send("workspace:active", null);
+}
 
 // ---------------------------------------------------------------------------
 // Server log forwarding — the Python server/automation's stdout/stderr only
@@ -67,6 +150,11 @@ function broadcastServerLog(level, line) {
   BrowserWindow.getAllWindows().forEach((win) => {
     if (!win.isDestroyed()) {
       win.webContents.send("server:log", { level, line, timestamp: Date.now() });
+    }
+  });
+  Object.values(workspaceViews).forEach((view) => {
+    if (view && !view.webContents.isDestroyed()) {
+      view.webContents.send("server:log", { level, line, timestamp: Date.now() });
     }
   });
 }
@@ -122,7 +210,166 @@ let quittingForUpdate = false;
 // and which hide the dashboard while they're open. Settings is the one
 // window explicitly allowed to stay open alongside the dashboard, so it's
 // deliberately left out of this list.
-const EXCLUSIVE_KEYS = ["cf2", "uploadSoa", "cf4", "about"];
+const EXCLUSIVE_KEYS = ["about"];
+const DOCKED_KEYS = ["cf2", "uploadSoa", "cf4"];
+
+// Docked workspace state. Automation screens stay as independent
+// BrowserWindows, but are positioned and animated as one workspace with the
+// dashboard acting as the navigation rail on the left.
+const DOCK_GAP = 8;
+const DOCK_ANIMATION_MS = 190;
+let activeDockedKey = null;
+let normalDashboardBounds = null;
+const boundsAnimations = new WeakMap();
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function animateWindowBounds(win, target, duration = DOCK_ANIMATION_MS) {
+  if (!win || win.isDestroyed()) return Promise.resolve();
+
+  const previousAnimation = boundsAnimations.get(win);
+  if (previousAnimation) {
+    clearInterval(previousAnimation.timer);
+    previousAnimation.resolve();
+  }
+
+  const start = win.getBounds();
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      if (win.isDestroyed()) {
+        clearInterval(timer);
+        boundsAnimations.delete(win);
+        resolve();
+        return;
+      }
+
+      const progress = Math.min(1, (Date.now() - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const value = (from, to) => Math.round(from + (to - from) * eased);
+      win.setBounds({
+        x: value(start.x, target.x),
+        y: value(start.y, target.y),
+        width: value(start.width, target.width),
+        height: value(start.height, target.height),
+      });
+
+      if (progress === 1) {
+        clearInterval(timer);
+        boundsAnimations.delete(win);
+        resolve();
+      }
+    }, 16);
+    boundsAnimations.set(win, { timer, resolve });
+  });
+}
+
+function getDockLayout() {
+  const dash = windows.dashboard;
+  const referenceBounds = dash && !dash.isDestroyed()
+    ? dash.getBounds()
+    : { x: 0, y: 0, width: 1200, height: 800 };
+  const { workArea } = screen.getDisplayMatching(referenceBounds);
+  const dashboardWidth = Math.min(
+    clamp(Math.round(workArea.width * 0.2), 280, 360),
+    Math.max(220, workArea.width - DOCK_GAP - 600)
+  );
+  return {
+    dashboard: {
+      x: workArea.x,
+      y: workArea.y,
+      width: dashboardWidth,
+      height: workArea.height,
+    },
+    content: {
+      x: workArea.x + dashboardWidth + DOCK_GAP,
+      y: workArea.y,
+      width: workArea.width - dashboardWidth - DOCK_GAP,
+      height: workArea.height,
+    },
+  };
+}
+
+function hideOtherDockedWindows(exceptKey) {
+  DOCKED_KEYS.forEach((key) => {
+    if (key === exceptKey) return;
+    const win = windows[key];
+    if (win && !win.isDestroyed()) win.hide();
+  });
+}
+
+function resetDockedWorkspaceImmediately() {
+  hideOtherDockedWindows(null);
+  activeDockedKey = null;
+  const dash = windows.dashboard;
+  if (dash && !dash.isDestroyed() && normalDashboardBounds) {
+    dash.setMinimumSize(280, 500);
+    dash.setBounds(normalDashboardBounds);
+    dash.setMinimumSize(900, 600);
+  }
+  normalDashboardBounds = null;
+}
+
+async function dockAutomationWindow(key, win) {
+  const dash = windows.dashboard;
+  if (!dash || dash.isDestroyed() || !win || win.isDestroyed()) return;
+
+  if (!activeDockedKey) normalDashboardBounds = dash.getBounds();
+  activeDockedKey = key;
+  hideOtherDockedWindows(key);
+
+  const layout = getDockLayout();
+  dash.setMinimumSize(280, 500);
+  win.setMinimumSize(600, 500);
+
+  if (dash.isMinimized()) dash.restore();
+  if (dash.isMaximized()) dash.unmaximize();
+  if (win.isMinimized()) win.restore();
+  if (win.isMaximized()) win.unmaximize();
+
+  if (!dash.isVisible()) dash.show();
+  await animateWindowBounds(dash, layout.dashboard);
+  if (activeDockedKey !== key || win.isDestroyed()) return;
+
+  // A small offset and opacity fade soften the arrival without making the
+  // workspace feel sluggish.
+  win.setBounds({ ...layout.content, x: layout.content.x + 36 });
+  win.setOpacity(0);
+  win.show();
+  const fadeStartedAt = Date.now();
+  const fadeTimer = setInterval(() => {
+    if (win.isDestroyed() || activeDockedKey !== key) {
+      clearInterval(fadeTimer);
+      return;
+    }
+    const progress = Math.min(1, (Date.now() - fadeStartedAt) / DOCK_ANIMATION_MS);
+    win.setOpacity(progress);
+    if (progress === 1) clearInterval(fadeTimer);
+  }, 16);
+  await animateWindowBounds(win, layout.content);
+  if (!win.isDestroyed()) {
+    win.setOpacity(1);
+    win.focus();
+  }
+}
+
+async function restoreDashboardLayout() {
+  const dash = windows.dashboard;
+  activeDockedKey = null;
+  hideOtherDockedWindows(null);
+  if (!dash || dash.isDestroyed()) return;
+
+  if (!dash.isVisible()) dash.show();
+  const target = normalDashboardBounds || dash.getBounds();
+  await animateWindowBounds(dash, target);
+  if (!dash.isDestroyed()) {
+    dash.setMinimumSize(900, 600);
+    dash.focus();
+  }
+  normalDashboardBounds = null;
+}
 
 // ---------------------------------------------------------------------------
 // Theme (light/dark) — persisted to a small JSON file in userData so it
@@ -157,6 +404,11 @@ function broadcastTheme(theme, excludeWebContents) {
   BrowserWindow.getAllWindows().forEach((win) => {
     if (win.webContents !== excludeWebContents) {
       win.webContents.send("theme:changed", theme);
+    }
+  });
+  Object.values(workspaceViews).forEach((view) => {
+    if (view && !view.webContents.isDestroyed() && view.webContents !== excludeWebContents) {
+      view.webContents.send("theme:changed", theme);
     }
   });
 }
@@ -305,7 +557,12 @@ function anyOtherExclusiveWindowVisible(exceptKey) {
 function createWindow(key, htmlFile, options = {}) {
   const existing = windows[key];
   if (existing && !existing.isDestroyed()) {
+    if (options.docked) {
+      dockAutomationWindow(key, existing);
+      return existing;
+    }
     if (options.exclusive) {
+      resetDockedWorkspaceImmediately();
       hideDashboard();
       hideOtherExclusiveWindows(key);
     }
@@ -349,7 +606,12 @@ function createWindow(key, htmlFile, options = {}) {
     options.search ? { search: options.search } : undefined
   );
   win.once("ready-to-show", () => {
+    if (options.docked) {
+      dockAutomationWindow(key, win);
+      return;
+    }
     if (options.exclusive) {
+      resetDockedWorkspaceImmediately();
       hideDashboard();
       hideOtherExclusiveWindows(key);
     }
@@ -357,6 +619,10 @@ function createWindow(key, htmlFile, options = {}) {
   });
   win.on("closed", () => {
     windows[key] = null;
+    if (options.docked && activeDockedKey === key && !quittingForUpdate) {
+      restoreDashboardLayout();
+      return;
+    }
     // If this was an exclusive window and nothing else exclusive is still
     // visible, bring the dashboard back so the user is never left with no
     // window open at all. Skipped while the app is quitting to install an
@@ -379,42 +645,34 @@ function createLoginWindow() {
 }
 
 function createDashboardWindow() {
-  return createWindow("dashboard", "dashboard.html", {
-    width: 1200,
+  const win = createWindow("dashboard", "dashboard.html", {
+    // CF2 is the sizing baseline for the complete embedded workspace.
+    // CF2, Upload SOA, and CF4 all share this exact fixed canvas.
+    width: 1450,
     height: 800,
-    minWidth: 900,
-    minHeight: 600,
+    minWidth: 1450,
+    minHeight: 800,
+    resizable: false,
   });
+  if (!win.__workspaceLayoutBound) {
+    win.__workspaceLayoutBound = true;
+    win.on("resize", layoutWorkspaceView);
+    win.on("maximize", layoutWorkspaceView);
+    win.on("unmaximize", layoutWorkspaceView);
+  }
+  return win;
 }
 
 function createCf2Window() {
-  return createWindow("cf2", "cf2.html", {
-    width: 1300,
-    height: 710,
-    minWidth: 1000,
-    minHeight: 710,
-    exclusive: true,
-  });
+  return showWorkspacePage("cf2", "cf2.html");
 }
 
 function createUploadSoaWindow() {
-  return createWindow("uploadSoa", "upload-soa.html", {
-    width: 1400,
-    height: 710,
-    minWidth: 1000,
-    minHeight: 710,
-    exclusive: true,
-  });
+  return showWorkspacePage("uploadSoa", "upload-soa.html");
 }
 
 function createCf4Window() {
-  return createWindow("cf4", "cf4.html", {
-    width: 820,
-    height: 780,
-    minWidth: 700,
-    minHeight: 600,
-    exclusive: true,
-  });
+  return showWorkspacePage("cf4", "cf4.html");
 }
 
 // Settings is now the login window — allows users to change credentials
@@ -481,6 +739,13 @@ ipcMain.handle("window:minimize", (event) => {
 ipcMain.handle("window:maximize", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
+  const dockedKey = DOCKED_KEYS.find((key) => windows[key] === win);
+  if ((win === windows.dashboard && activeDockedKey) || dockedKey) {
+    const key = dockedKey || activeDockedKey;
+    const dockedWindow = windows[key];
+    if (dockedWindow && !dockedWindow.isDestroyed()) dockAutomationWindow(key, dockedWindow);
+    return;
+  }
   if (win.isMaximized()) {
     win.unmaximize();
   } else {
@@ -530,6 +795,17 @@ ipcMain.handle("open:cf4Window", () => {
   createCf4Window();
 });
 
+ipcMain.handle("workspace:setSidebarWidth", (event, width) => {
+  if (event.sender !== windows.dashboard?.webContents) return;
+  workspaceSidebarWidth = width === 68 ? 68 : 232;
+  layoutWorkspaceView();
+});
+
+ipcMain.handle("workspace:home", (event) => {
+  if (event.sender !== windows.dashboard?.webContents) return;
+  hideWorkspacePage();
+});
+
 ipcMain.handle("open:settingsWindow", () => {
   createSettingsWindow();
 });
@@ -544,9 +820,21 @@ ipcMain.handle("open:aboutWindow", () => {
 // navigates back into it later.
 ipcMain.handle("nav:goHome", (event) => {
   if (forcedUpdateActive) return; // no bypassing a required update
+  const workspaceEntry = Object.entries(workspaceViews).find(([, view]) =>
+    view && !view.webContents.isDestroyed() && view.webContents === event.sender
+  );
+  if (workspaceEntry) {
+    hideWorkspacePage();
+    showDashboard();
+    return;
+  }
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.hide();
-  showDashboard();
+  if (DOCKED_KEYS.some((key) => windows[key] === win)) {
+    restoreDashboardLayout();
+  } else {
+    showDashboard();
+  }
 });
 
 // Navigate from login to dashboard
@@ -557,6 +845,8 @@ ipcMain.handle("nav:goToDashboard", (event) => {
 
 // Logout — hide dashboard and show login window
 ipcMain.handle("nav:logout", (event) => {
+  hideWorkspacePage();
+  resetDockedWorkspaceImmediately();
   hideDashboard();
   showLogin();
 });
