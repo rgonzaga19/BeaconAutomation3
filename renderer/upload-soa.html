@@ -104,6 +104,55 @@
   #soaFolderInput::placeholder { color: var(--text-sec); }
   #browseBtn { flex: none; }
 
+  /* ---------- Compact file-naming guide ---------- */
+  .soa-guide {
+    margin: 8px 24px 0;
+    padding: 9px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--accent-soft);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-md);
+  }
+  .soa-guide-title {
+    flex: none;
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+  }
+  .soa-guide-list {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px 14px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: guide-step;
+  }
+  .soa-guide-list li {
+    counter-increment: guide-step;
+    color: var(--text-sec);
+    font-size: 10.5px;
+    white-space: nowrap;
+  }
+  .soa-guide-list li::before {
+    content: counter(guide-step) ".";
+    margin-right: 4px;
+    color: var(--accent);
+    font-weight: 800;
+  }
+  .soa-guide-list li:nth-child(7),
+  .soa-guide-list li:nth-child(7)::before {
+    color: var(--error);
+    font-weight: 800;
+  }
+
   /* ---------- Two-column body ---------- */
   .body {
     flex: 1;
@@ -188,6 +237,19 @@
         <button class="cyber-btn" id="browseBtn">📁  BROWSE</button>
       </div>
     </div>
+
+    <aside class="soa-guide" aria-label="SOA file naming guide">
+      <div class="soa-guide-title">User Guide</div>
+      <ol class="soa-guide-list">
+        <li>Create the patient SOA</li>
+        <li>Name it using the patient surname</li>
+        <li>Use the surname only—no special characters</li>
+        <li>For two-word surnames, use one space: <strong>DEL ROSARIO</strong></li>
+        <li>For matching surnames, add an initial: <strong>ABAO A</strong> or <strong>ABAO B</strong></li>
+        <li>Do not include suffixes such as <strong>Jr.</strong>, <strong>Sr.</strong>, <strong>II</strong>, or <strong>III</strong></li>
+        <li>Upload accuracy depends on the SOA Excel filename</li>
+      </ol>
+    </aside>
 
     <div class="body">
       <div class="col">
