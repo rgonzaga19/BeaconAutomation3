@@ -27,8 +27,20 @@
   function updateToggleIcon(theme) {
     const btn = document.getElementById("btnThemeToggle");
     if (!btn) return;
-    btn.textContent = theme === "light" ? "☀" : "🌙";
-    btn.title = theme === "light" ? "Switch to dark mode" : "Switch to light mode";
+    const isLight = theme === "light";
+    const icon = btn.querySelector(".theme-switch-icon");
+    const label = btn.querySelector(".theme-switch-label");
+    const actionLabel = isLight ? "Switch to dark mode" : "Switch to light mode";
+
+    if (icon) {
+      icon.textContent = isLight ? "☀" : "🌙";
+      if (label) label.textContent = isLight ? "Light" : "Dark";
+      btn.setAttribute("aria-checked", String(isLight));
+      btn.setAttribute("aria-label", actionLabel);
+    } else {
+      btn.textContent = isLight ? "☀" : "🌙";
+    }
+    btn.title = actionLabel;
   }
 
   function applyTheme(theme) {

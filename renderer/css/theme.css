@@ -231,12 +231,11 @@ html, body {
   padding: 8px 18px;
   cursor: pointer;
   border-radius: var(--radius-md);
-  transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.06s ease;
+  transition: background-color 0.15s ease, transform 0.06s ease;
 }
 
 .cyber-btn:hover {
   background: var(--accent-soft);
-  box-shadow: var(--shadow-sm);
 }
 
 .cyber-btn:active {
@@ -271,13 +270,11 @@ html, body {
   padding: 9px 14px;
   cursor: pointer;
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
-  transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.06s ease;
+  transition: background-color 0.15s ease, transform 0.06s ease;
 }
 
 .solid-btn:hover {
   background: var(--accent2);
-  box-shadow: var(--shadow-md);
 }
 
 .solid-btn:active {
@@ -298,11 +295,10 @@ html, body {
   outline-offset: 2px;
 }
 
-/* ---------- Section label (the "▸ SECTION" divider) ---------- */
+/* ---------- Section labels ---------- */
 .section-label {
   display: flex;
   align-items: center;
-  gap: 8px;
   padding: 10px 14px 2px 14px;
 }
 
@@ -313,12 +309,6 @@ html, body {
   font-weight: 700;
   letter-spacing: 0.6px;
   white-space: nowrap;
-}
-
-.section-label .rule {
-  flex: 1;
-  height: 1px;
-  background: var(--border);
 }
 
 /* ---------- Panels / cards ---------- */
@@ -453,7 +443,7 @@ textarea:focus, input:focus {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: none;
   min-width: 320px;
   max-width: 480px;
   padding: 22px;

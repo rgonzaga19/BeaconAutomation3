@@ -7,31 +7,53 @@
 <link rel="stylesheet" href="css/theme.css" />
 <style>
   /* ============================================================
-     CF2 page layout — restyled for a calmer, more professional
-     "claims console" read. Structure only: every #id the renderer
-     script (cf2.js) touches is unchanged, so no logic is affected.
+     CF2 page layout — modern FLAT UI pass.
+
+     Flat design rules applied throughout this file:
+       • no gradients, no drop shadows, no skeuomorphism
+       • separation is drawn with color blocks / thin borders only
+       • one accent color, a couple of semantic colors, done
+       • simple line-icon glyphs (inline SVG) instead of emoji
+       • generous, consistent spacing on an 8px grid
+       • clear typographic hierarchy, sans-serif throughout
+
+     Structure only: every #id the renderer script (cf2.js) touches
+     is unchanged, and every class name it toggles (.active, .log-line
+     levels, .guide-step*, etc.) still exists — so no logic is
+     affected by this pass.
      ============================================================ */
 
+  :root {
+    --gap-1: 8px;
+    --gap-2: 16px;
+    --gap-3: 24px;
+  }
+
+  /* ---------- Simple flat line-icon glyphs ---------- */
+  .icon-flat { display: inline-flex; align-items: center; justify-content: center; flex: none; line-height: 0; }
+  .icon-flat svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ---------- Page header ---------- */
   .page-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 16px 24px 14px 24px;
+    gap: var(--gap-2);
+    padding: 18px var(--gap-3) 16px var(--gap-3);
     border-bottom: 1px solid var(--border);
   }
   .page-header .glyph {
-    width: 34px;
-    height: 34px;
+    width: 36px;
+    height: 36px;
     flex: none;
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--accent);
-    border: 1px solid var(--border);
-    background: var(--bg-panel);
+    background: var(--accent-soft);
+    border: none;
     border-radius: var(--radius-md);
-    font-size: 16px;
   }
+  .page-header .glyph img { width: 20px; height: 20px; object-fit: contain; display: block; }
   .page-header .title-block { line-height: 1.3; }
   .page-header .title {
     font-family: var(--font-ui);
@@ -46,26 +68,20 @@
     font-size: 10.5px;
     letter-spacing: 0.3px;
   }
-  .page-header .btn-home {
+  .page-header .mode-flag {
     margin-left: auto;
+    flex: none;
     display: flex;
     align-items: center;
     gap: 6px;
-    background: var(--bg-panel);
+    padding: 6px 12px;
     color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-md);
-    font-family: var(--font-ui);
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: 0.3px;
-    padding: 8px 14px;
-    cursor: pointer;
-    transition: background-color 0.15s ease, color 0.15s ease;
-  }
-  .page-header .btn-home:hover {
     background: var(--accent-soft);
-    color: var(--text-pri);
+    border-radius: 999px;
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
   }
 
   /* Row that holds the left-hand form workspace and the right-hand log
@@ -73,22 +89,24 @@
   .main-row {
     flex: 1;
     display: flex;
-    gap: 16px;
-    padding: 16px 24px 20px 24px;
+    gap: var(--gap-2);
+    padding: var(--gap-2) var(--gap-3) var(--gap-3) var(--gap-3);
     min-height: 0;
   }
 
   .workspace {
     flex: 1 1 0;
-    padding: 0;
+    padding: 0 10px 0 0;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: var(--gap-2);
     overflow-y: auto;
+    scrollbar-gutter: stable;
     min-height: 0;
   }
 
-  .section-block { padding: 4px 16px 16px 16px; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+  /* Flat panels: a single-weight border does the separating, no shadow. */
+  .section-block { padding: 4px var(--gap-2) var(--gap-2) var(--gap-2); border-radius: var(--radius-lg); box-shadow: none; }
 
   /* Claim Period and Workbook panels keep their natural (compact)
      height; the Reminder panel below absorbs whatever vertical space
@@ -99,7 +117,7 @@
   /* ---------- Claim period ---------- */
   .field-row {
     display: flex;
-    gap: 24px;
+    gap: var(--gap-3);
     padding: 10px 4px 4px 4px;
   }
   .field-group { flex: none; }
@@ -119,7 +137,7 @@
     border-radius: var(--radius-sm);
     font-family: var(--font-mono);
     font-size: 12px;
-    padding: 7px 10px;
+    padding: 8px 10px;
     min-width: 140px;
   }
   .field-group select:focus {
@@ -129,44 +147,56 @@
   }
   .field-group select:disabled { opacity: 0.5; }
 
-  /* ---------- Mode toggle: New Draft vs Existing Draft ---------- */
+  /* ---------- Mode toggle: New Draft vs Existing Draft ----------
+     A flat segmented control: the active segment is a solid color
+     fill (not a soft tint + shadow), which is what actually reads as
+     "selected" in flat UI — contrast of fill, not elevation. */
   .mode-toggle {
     display: flex;
-    gap: 8px;
+    gap: 0;
     padding: 10px 4px 2px 4px;
-  }
-  .mode-btn {
-    flex: 1;
     background: var(--bg-card);
-    color: var(--text-sec);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
+    margin-top: 2px;
+  }
+  .mode-toggle { padding: 3px; gap: 3px; }
+  .mode-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    background: transparent;
+    color: var(--text-sec);
+    border: none;
+    border-radius: var(--radius-sm);
     font-family: var(--font-ui);
     font-size: 11.5px;
     font-weight: 600;
     letter-spacing: 0.2px;
     padding: 10px 12px;
     cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
   }
-  .mode-btn:hover { border-color: var(--accent); color: var(--text-pri); }
+  .mode-btn:hover { color: var(--text-pri); background: var(--accent-soft); }
   .mode-btn.active {
-    background: var(--accent-soft);
-    border-color: var(--accent);
-    color: var(--accent);
+    background: var(--accent);
+    color: var(--bg-dark);
   }
+  .mode-btn.active:hover { background: var(--accent); }
   .mode-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .mode-hint {
     color: var(--text-sec);
     font-size: 10.5px;
     line-height: 1.5;
-    padding: 8px 4px 4px 4px;
+    padding: 10px 6px 4px 6px;
   }
 
   /* ---------- Workbook: upload + guide ---------- */
   .workbook-row {
     display: flex;
-    gap: 16px;
+    gap: var(--gap-2);
     padding: 10px 4px 4px 4px;
     align-items: stretch;
   }
@@ -180,7 +210,7 @@
     padding: 4px 4px;
   }
 
-  #uploadBtn { align-self: flex-start; }
+  #uploadBtn { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; }
 
   .file-status {
     display: flex;
@@ -189,34 +219,34 @@
     color: var(--text-sec);
     font-family: var(--font-mono);
     font-size: 12px;
-    padding: 8px 12px;
+    padding: 9px 12px;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
   }
-  .file-status::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    background: var(--text-sec);
-    flex: none;
-  }
+  .file-status .icon-flat { color: var(--text-sec); }
   #fileLabel { color: var(--text-pri); }
 
   #downloadTemplateLink {
     align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     color: var(--accent);
     text-decoration: none;
-    border-bottom: 1px dashed var(--accent2);
+    border-bottom: 1px solid transparent;
     cursor: pointer;
     font-size: 11px;
+    font-weight: 600;
     letter-spacing: 0.2px;
     padding-bottom: 1px;
   }
-  #downloadTemplateLink:hover { color: var(--text-pri); border-color: var(--text-pri); }
+  #downloadTemplateLink:hover { color: var(--text-pri); border-color: currentColor; }
 
+  /* Flat card: color-block accent bar for separation, no shadow ever
+     (including on hover — hover reads via a background fill change). */
   .guide-card {
-    width: 210px;
+    width: 216px;
     flex: none;
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -228,14 +258,16 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
   }
   .guide-card:hover {
     background: var(--accent-soft);
     border-color: var(--accent);
-    box-shadow: var(--shadow-sm);
   }
   .guide-card .guide-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-family: var(--font-ui);
     color: var(--accent);
     font-weight: 700;
@@ -279,9 +311,15 @@
     font-size: 12.5px;
   }
   .stat-card .stat-icon {
-    color: var(--accent);
-    font-size: 15px;
+    width: 26px;
+    height: 26px;
     flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: var(--radius-sm);
   }
 
   /* ---------- Reminder ---------- */
@@ -292,7 +330,7 @@
     border: 1px solid var(--border);
     border-left: 3px solid var(--warning);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-sm);
+    box-shadow: none;
     padding: 14px 16px 16px 16px;
   }
   .reminder-body {
@@ -304,9 +342,14 @@
   }
   .reminder-body .reminder-icon {
     flex: none;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: var(--warning);
-    font-size: 18px;
-    line-height: 1;
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+    border-radius: var(--radius-sm);
   }
   .reminder-body .reminder-text {
     color: var(--text-sec);
@@ -322,7 +365,7 @@
     display: flex;
     flex-direction: column;
     padding: 0;
-    gap: 8px;
+    gap: var(--gap-1);
   }
   #cf2LogBox { flex: 1; min-height: 0; }
   /* Raw stdout/stderr forwarded from main.js (see cf2.js's onServerLog) —
@@ -331,8 +374,13 @@
      blending into the plain INFO stream. */
   .log-line.ERROR { color: var(--error, #ff6b6b); }
   .open-log-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
     color: var(--accent);
     font-size: 10.5px;
+    font-weight: 600;
     letter-spacing: 0.2px;
     cursor: pointer;
     white-space: nowrap;
@@ -344,13 +392,19 @@
     padding: 13px;
     font-size: 11pt;
     flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    box-shadow: none;
   }
+  #startBtn:hover { box-shadow: none; }
 
-  /* ---------- User Guide modal ---------- */
-  .guide-modal .modal-box { max-width: 620px; max-height: 80vh; overflow-y: auto; padding: 24px 26px; }
+  /* ---------- User Guide modal (flat: border only, no elevation shadow) ---------- */
+  .guide-modal .modal-box { max-width: 620px; max-height: 80vh; overflow-y: auto; padding: var(--gap-3) 26px; box-shadow: none; }
   @media (max-width: 900px) {
     .main-row { display:grid; grid-template-columns:1fr; overflow-y:auto; }
-    .workspace { overflow:visible; }
+    .workspace { overflow:visible; padding-right:0; }
     .log-section { min-height:360px; }
     .workbook-row { flex-direction:column; }
     .guide-card { width:100%; }
@@ -372,7 +426,7 @@
   }
   .guide-step {
     display: flex;
-    gap: 16px;
+    gap: var(--gap-2);
     align-items: flex-start;
     padding: 14px 4px;
     border-bottom: 1px solid var(--border);
@@ -389,7 +443,7 @@
     justify-content: center;
     background: var(--accent-soft);
     color: var(--accent);
-    border: 1px solid var(--accent);
+    border: none;
     border-radius: var(--radius-sm);
     font-weight: bold;
     font-size: 11px;
@@ -408,7 +462,7 @@
   .guide-modal .modal-actions { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
   .guide-modal .modal-box { max-width: 780px; }
   .guide-intro { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; color:var(--text-sec); font-size:11.5px; }
-  .guide-mode-pill { flex:none; padding:5px 9px; color:var(--accent); background:var(--accent-soft); border:1px solid var(--accent); border-radius:999px; font-size:9.5px; font-weight:800; letter-spacing:.4px; }
+  .guide-mode-pill { flex:none; padding:5px 9px; color:var(--accent); background:var(--accent-soft); border:none; border-radius:999px; font-size:9.5px; font-weight:800; letter-spacing:.4px; }
   .guide-steps-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
   .guide-steps-grid .guide-step { position:relative; display:block; min-height:142px; padding:15px 15px 14px 54px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); }
   .guide-steps-grid .guide-step:hover { border-color:var(--accent); background:var(--accent-soft); }
@@ -443,7 +497,7 @@
       <div class="workspace">
 
         <div class="panel section-block">
-          <div class="section-label"><span>▸ CLAIM PERIOD</span><div class="rule"></div></div>
+          <div class="section-label"><span>▸ CLAIM PERIOD</span></div>
           <div class="field-row">
             <div class="field-group">
               <label>Claim Year</label>
@@ -457,11 +511,17 @@
         </div>
 
         <div class="panel section-block">
-          <div class="section-label"><span>▸ WORKBOOK</span><div class="rule"></div></div>
+          <div class="section-label"><span>▸ WORKBOOK</span></div>
 
           <div class="mode-toggle" id="modeToggle">
-            <button class="mode-btn active" id="modeNewDraft" data-mode="new_draft">🆕 New Draft</button>
-            <button class="mode-btn" id="modeExistingDraft" data-mode="existing_draft">📁 Existing Draft</button>
+            <button class="mode-btn active" id="modeNewDraft" data-mode="new_draft">
+              <span class="icon-flat"><svg viewBox="0 0 24 24"><path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13 3v6h6"/><path d="M12 18v-5"/><path d="M9.5 15.5h5"/></svg></span>
+              New Draft
+            </button>
+            <button class="mode-btn" id="modeExistingDraft" data-mode="existing_draft">
+              <span class="icon-flat"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+              Existing Draft
+            </button>
           </div>
           <div class="mode-hint" id="modeHint">
             Column A of the template is the patient's <strong>Member PIN</strong> — a new Beacon draft is created for each row.
@@ -469,29 +529,45 @@
 
           <div class="workbook-row">
             <div class="upload-col">
-              <button class="solid-btn" id="uploadBtn">📂 Upload Excel File</button>
+              <button class="solid-btn" id="uploadBtn">
+                <span class="icon-flat"><svg viewBox="0 0 24 24"><path d="M12 15V4"/><path d="M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg></span>
+                Upload Excel File
+              </button>
               <div class="file-status">
+                <span class="icon-flat"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span>
                 <span id="fileLabel">No file selected</span>
               </div>
-              <span id="downloadTemplateLink">⬇ Download Excel Template</span>
+              <span id="downloadTemplateLink">
+                <span class="icon-flat"><svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg></span>
+                Download Excel Template
+              </span>
             </div>
             <div class="guide-card" id="guideCard">
-              <div class="guide-title">📘 USER GUIDE</div>
+              <div class="guide-title">
+                <span class="icon-flat"><svg viewBox="0 0 24 24"><path d="M3 5.5A2.5 2.5 0 0 1 5.5 3H12v18H5.5A2.5 2.5 0 0 1 3 18.5z"/><path d="M21 5.5A2.5 2.5 0 0 0 18.5 3H12v18h6.5a2.5 2.5 0 0 0 2.5-2.5z"/></svg></span>
+                USER GUIDE
+              </div>
               <div class="guide-desc">Read the quick guide before uploading your Excel template.</div>
               <div class="guide-open-btn">Open Guide →</div>
             </div>
           </div>
 
           <div class="stat-row">
-            <div class="stat-card"><span class="stat-icon">🗂</span><span id="sheetsLine">Sheets : -</span></div>
-            <div class="stat-card"><span class="stat-icon">👥</span><span id="patientsLine">Patients Found : 0</span></div>
+            <div class="stat-card">
+              <span class="stat-icon"><svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l4-3h5l2 3h7v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg></span>
+              <span id="sheetsLine">Sheets : -</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon"><svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="3.5"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+              <span id="patientsLine">Patients Found : 0</span>
+            </div>
           </div>
         </div>
 
         <div class="reminder-block">
-          <div class="section-label"><span>▸ REMINDER</span><div class="rule"></div></div>
+          <div class="section-label"><span>▸ REMINDER</span></div>
           <div class="reminder-body">
-            <span class="reminder-icon">⚠</span>
+            <span class="reminder-icon"><svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.9 18a1.5 1.5 0 0 0 1.3 2.3h17.6a1.5 1.5 0 0 0 1.3-2.3L13.7 3.9a1.5 1.5 0 0 0-2.6 0Z"/><path d="M12 9v4"/><path d="M12 16.5h.01"/></svg></span>
             <span class="reminder-text">
               <strong>Always verify the accuracy of the information</strong> before and after running this automation.
               This tool is designed to reduce manual, repetitive work and speed up encoding — it does not replace
@@ -506,11 +582,16 @@
       <div class="log-section">
         <div class="section-label">
           <span>▸ EXECUTION LOG</span>
-          <div class="rule"></div>
-          <span id="openLogFileLink" class="open-log-link" title="Open the full raw log file">🗒 Log File</span>
+          <span id="openLogFileLink" class="open-log-link" title="Open the full raw log file">
+            <span class="icon-flat"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/></svg></span>
+            Log File
+          </span>
         </div>
         <div class="log-box" id="cf2LogBox"></div>
-        <button class="solid-btn" id="startBtn">Start Automation</button>
+        <button class="solid-btn" id="startBtn">
+          <span class="icon-flat"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4.5v15l13-7.5z"/></svg></span>
+          Start Automation
+        </button>
       </div>
 
     </div>

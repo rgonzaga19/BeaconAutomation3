@@ -123,132 +123,65 @@
 
     <!-- ================= Content ================= -->
     <div class="about-content">
-
         <div class="about-grid">
-
-            <!-- ---------- Left column ---------- -->
-            <div class="col-left">
-
-                <div class="panel card-panel">
-
-                    <div class="section-label">
-                        <span>▸ ABOUT THIS APPLICATION</span>
-                        <div class="rule"></div>
-                    </div>
-
-                    <div class="about-text">
-                        <p>
-                            Beabots is a desktop automation tool built to speed up
-                            the encoding of PhilHealth Beacon claims. It handles the
-                            repetitive parts of claims processing so encoders can
-                            move through submissions faster and with fewer errors.
-                        </p>
-                    </div>
-
-                    <div class="info-grid">
-
-                        <div class="info-row">
-                            <div class="label">Current Version</div>
-                            <div class="value" id="version">Loading...</div>
-                        </div>
-
-                        <div class="info-row">
-                            <div class="label">Developer</div>
-                            <div class="value">Romel Gonzaga</div>
-                        </div>
-
-                        <div class="info-row">
-                            <div class="label">Companion App</div>
-                            <div class="value">SOA Excel Generator</div>
-                        </div>
-
-                    </div>
-
-                    <div class="label" style="margin-top:14px;">Core Features</div>
-
-                    <div class="feature-grid">
-                        <div class="feature-chip">
-                            <span class="feature-icon">🆕</span>
-                            <div>
-                                <div class="feature-title">Auto Draft</div>
-                                <div class="feature-desc">Automated drafting of claim entries</div>
+            <div class="about-main">
+                <section class="panel product-card">
+                    <div class="product-lockup">
+                        <div class="product-mark"><img src="../bot.ico" alt=""></div>
+                        <div class="product-identity">
+                            <span class="eyebrow">Beacon automation suite</span>
+                            <div class="product-title-row">
+                                <h1>Beabots</h1>
+                                <span class="version-badge" id="version">Loading...</span>
                             </div>
-                        </div>
-                        <div class="feature-chip">
-                            <span class="feature-icon">📄</span>
-                            <div>
-                                <div class="feature-title">CF2</div>
-                                <div class="feature-desc">Automated encoding for PhilHealth CF2 forms</div>
-                            </div>
-                        </div>
-                        <div class="feature-chip">
-                            <span class="feature-icon">🧾</span>
-                            <div>
-                                <div class="feature-title">CF4</div>
-                                <div class="feature-desc">Automated encoding for PhilHealth CF4 forms</div>
-                            </div>
-                        </div>
-                        <div class="feature-chip">
-                            <span class="feature-icon">⇪</span>
-                            <div>
-                                <div class="feature-title">Upload SOA</div>
-                                <div class="feature-desc">Automated upload of Statement of Account files</div>
-                            </div>
-                        </div>
-                        <div class="feature-chip feature-chip-wide">
-                            <span class="feature-icon">💊</span>
-                            <div>
-                                <div class="feature-title">Medicine Mapping</div>
-                                <div class="feature-desc">Maps medicines to their correct claim codes/entries</div>
-                            </div>
+                            <p>Beabots is an API-driven automation platform built to streamline data encoding and deliver faster, more consistent PhilHealth Beacon claim processing in one focused desktop workspace.</p>
                         </div>
                     </div>
 
-                </div>
-
-                <div class="panel card-panel">
-
-                    <div class="section-label">
-                        <span>▸ LICENSE INFORMATION</span>
-                        <div class="rule"></div>
+                    <div class="product-details" aria-label="Application details">
+                        <div class="product-detail">
+                            <span class="detail-icon" aria-hidden="true">◇</span>
+                            <div><span>Created by</span><strong>Romel Gonzaga</strong></div>
+                        </div>
+                        <div class="product-detail">
+                            <span class="detail-icon" aria-hidden="true">↗</span>
+                            <div><span>Works with</span><strong>SOA Excel Generator</strong></div>
+                        </div>
                     </div>
+                </section>
 
-                    <div class="info-grid">
-
-                        <div class="info-row">
-                            <div class="label">Licensed To</div>
-                            <div class="value" id="owner">Loading...</div>
+                <section class="panel license-card">
+                    <div class="card-heading">
+                        <div>
+                            <span class="eyebrow">License</span>
+                            <h2>Workspace access</h2>
                         </div>
-
-                        <div class="info-row">
-                            <div class="label">Plan</div>
-                            <div class="value" id="plan">Loading...</div>
-                        </div>
-
-                        <div class="info-row">
-                            <div class="label">License Expires</div>
-                            <div class="value" id="expires">Loading...</div>
-                        </div>
-
+                        <span class="license-indicator" aria-hidden="true"></span>
                     </div>
-
-                </div>
-
+                    <div class="license-summary">
+                        <div class="license-owner">
+                            <span>Licensed to</span>
+                            <strong id="owner">Loading...</strong>
+                        </div>
+                        <div class="license-fact">
+                            <span>Plan</span>
+                            <strong id="plan">Loading...</strong>
+                        </div>
+                        <div class="license-fact">
+                            <span>Valid until</span>
+                            <strong id="expires">Loading...</strong>
+                        </div>
+                    </div>
+                </section>
             </div>
 
-            <!-- ---------- Right column ---------- -->
-            <div class="col-right">
-
-                <div class="panel card-panel update-panel">
-
-                    <div class="section-label">
-                        <span>▸ APPLICATION UPDATES</span>
-                        <div class="rule"></div>
-                    </div>
-
-                    <div class="info-row">
-                        <div class="label">Latest Version</div>
-                        <div class="value" id="latestVersion">Checking...</div>
+            <aside class="panel update-panel">
+                    <div class="card-heading update-heading">
+                        <div>
+                            <span class="eyebrow">Software</span>
+                            <h2>Updates</h2>
+                        </div>
+                        <div class="latest-version"><span>Latest</span><strong id="latestVersion">Checking...</strong></div>
                     </div>
                     <div
                         id="updateStatus"
@@ -276,17 +209,12 @@
 
                     </div>
 
-                    <div class="label" style="margin-top:4px;">Release Notes</div>
+                    <div class="release-heading">Release notes</div>
 
                     <ul id="releaseNotes" class="update-notes">
                     </ul>
-
-                </div>
-
-            </div>
-
+            </aside>
         </div>
-
     </div>
 
 </div>

@@ -7,14 +7,20 @@
 <link rel="stylesheet" href="css/theme.css" />
 <style>
   .toolbar { display:flex; align-items:center; padding:12px 18px; gap:8px; border-bottom:1px solid var(--border); }
-  .toolbar .push-right { margin-left:auto; display:flex; gap:8px; }
-  .toolbar .cyber-btn.active { color:var(--text-pri); background:var(--accent-soft-strong); border-color:var(--accent); }
   .menu-toggle { width:40px; height:38px; display:inline-flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:0; background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-md); cursor:pointer; transition:background 140ms ease,border-color 140ms ease; }
   .menu-toggle:hover { background:var(--accent-soft); border-color:var(--accent); }
   .menu-toggle span { width:17px; height:2px; border-radius:2px; background:var(--text-pri); transition:transform 160ms ease,opacity 120ms ease; }
   .menu-toggle[aria-expanded="false"] span:first-child { transform:translateY(6px) rotate(45deg); }
   .menu-toggle[aria-expanded="false"] span:nth-child(2) { opacity:0; }
   .menu-toggle[aria-expanded="false"] span:last-child { transform:translateY(-6px) rotate(-45deg); }
+  .theme-switch { margin-left:auto; height:38px; display:inline-flex; align-items:center; gap:9px; padding:0 10px 0 12px; color:var(--text-sec); background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-md); font:700 10px var(--font-ui); letter-spacing:.35px; cursor:pointer; transition:color 140ms ease,background 140ms ease,border-color 140ms ease; }
+  .theme-switch:hover { color:var(--text-pri); background:var(--accent-soft); border-color:var(--accent); }
+  .theme-switch:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .theme-switch-icon { width:15px; color:var(--accent); font-size:14px; line-height:1; }
+  .theme-switch-track { width:34px; height:18px; position:relative; flex:0 0 34px; background:var(--border); border-radius:9px; transition:background 180ms ease; }
+  .theme-switch-thumb { width:12px; height:12px; position:absolute; top:3px; left:3px; background:var(--text-pri); border-radius:50%; transition:transform 180ms ease,background 180ms ease; }
+  .theme-switch[aria-checked="true"] .theme-switch-track { background:var(--accent); }
+  .theme-switch[aria-checked="true"] .theme-switch-thumb { transform:translateX(16px); background:var(--bg-base); }
 
   .dashboard-layout { flex:1; display:flex; min-height:0; }
   .sidebar { width:232px; flex:0 0 232px; display:flex; flex-direction:column; padding:14px 10px; overflow:hidden; background:var(--bg-panel); border-right:1px solid var(--border); transition:width 180ms ease,flex-basis 180ms ease; }
@@ -80,13 +86,16 @@
       <span class="icon"><img src="../bot.ico" alt=""></span>
       <span class="title">BEABOTS - BEACON AUTOMATION</span>
       <span class="spacer"></span>
-      <div class="titlebar-btn" id="btnThemeToggle" title="Toggle theme">☾</div>
       <div class="titlebar-btn" id="btnMinimize">─</div>
       <div class="titlebar-btn close" id="btnClose">×</div>
     </div>
     <div class="toolbar">
       <button class="menu-toggle" id="btnSidebarToggle" type="button" aria-label="Collapse sidebar" aria-controls="dashboardSidebar" aria-expanded="true"><span></span><span></span><span></span></button>
-      <div class="push-right"><button class="cyber-btn" id="btnAbout">ℹ About</button></div>
+      <button class="theme-switch" id="btnThemeToggle" type="button" role="switch" aria-checked="false" aria-label="Switch to light mode" title="Switch to light mode">
+        <span class="theme-switch-icon" aria-hidden="true">🌙</span>
+        <span class="theme-switch-label">Dark</span>
+        <span class="theme-switch-track" aria-hidden="true"><span class="theme-switch-thumb"></span></span>
+      </button>
     </div>
     <div class="dashboard-layout">
       <aside class="sidebar" id="dashboardSidebar" aria-label="Main navigation">
@@ -105,6 +114,7 @@
           <button class="side-link" id="btnUploadSoa" type="button" title="Auto Upload SOA"><span class="side-icon" aria-hidden="true">⇧</span><span class="side-label">Auto Upload SOA</span></button>
           <button class="side-link" id="btnCf4" type="button" title="Claim Form 4"><span class="side-icon" aria-hidden="true">▤</span><span class="side-label">Claim Form 4</span></button>
           <button class="side-link" id="btnSettings" type="button" title="Settings"><span class="side-icon" aria-hidden="true">⚙</span><span class="side-label">Settings</span></button>
+          <button class="side-link" id="btnAbout" type="button" title="About"><span class="side-icon" aria-hidden="true">ℹ</span><span class="side-label">About</span></button>
         </nav>
         <div class="sidebar-bottom"><button class="side-link" id="btnLogout" type="button" title="Log out"><span class="side-icon" aria-hidden="true">↪</span><span class="side-label">Log out</span></button></div>
       </aside>
