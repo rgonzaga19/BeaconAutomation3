@@ -348,6 +348,17 @@
 
   /* ---------- User Guide modal ---------- */
   .guide-modal .modal-box { max-width: 620px; max-height: 80vh; overflow-y: auto; padding: 24px 26px; }
+  @media (max-width: 900px) {
+    .main-row { display:grid; grid-template-columns:1fr; overflow-y:auto; }
+    .workspace { overflow:visible; }
+    .log-section { min-height:360px; }
+    .workbook-row { flex-direction:column; }
+    .guide-card { width:100%; }
+  }
+  @media (max-width: 620px) {
+    .field-row, .stat-row { flex-direction:column; gap:10px; }
+    .field-group, .field-group select { width:100%; }
+  }
   .guide-modal h2 {
     font-family: var(--font-ui);
     text-align: left;
@@ -386,7 +397,6 @@
     height: 22px;
     margin-bottom: 8px;
   }
-  .guide-step .step-icon { font-size: 19px; display: block; color: var(--text-sec); }
   .guide-step .step-title {
     color: var(--text-pri);
     font-weight: bold;
@@ -396,6 +406,15 @@
   }
   .guide-step .step-desc { color: var(--text-sec); font-size: 11px; line-height: 1.6; white-space: pre-line; }
   .guide-modal .modal-actions { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
+  .guide-modal .modal-box { max-width: 780px; }
+  .guide-intro { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; color:var(--text-sec); font-size:11.5px; }
+  .guide-mode-pill { flex:none; padding:5px 9px; color:var(--accent); background:var(--accent-soft); border:1px solid var(--accent); border-radius:999px; font-size:9.5px; font-weight:800; letter-spacing:.4px; }
+  .guide-steps-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+  .guide-steps-grid .guide-step { position:relative; display:block; min-height:142px; padding:15px 15px 14px 54px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); }
+  .guide-steps-grid .guide-step:hover { border-color:var(--accent); background:var(--accent-soft); }
+  .guide-step-number { position:absolute; top:14px; left:14px; width:27px; height:27px; display:grid; place-items:center; color:var(--accent); background:var(--bg-panel); border:1px solid var(--accent); border-radius:8px; font-size:10.5px; font-weight:900; }
+  .guide-step-note { margin-top:8px; color:var(--accent); font-size:10px; font-weight:700; line-height:1.45; }
+  @media (max-width:680px) { .guide-steps-grid { grid-template-columns:1fr; } .guide-steps-grid .guide-step { min-height:0; } }
 </style>
 </head>
 <body>

@@ -276,3 +276,12 @@
     align-self: flex-start;
     margin: 14px 14px 18px;
 }
+
+@media (max-width: 900px) {
+    .about-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+    .about-content { padding-left: 14px; padding-right: 14px; }
+    .feature-grid { grid-template-columns: 1fr; }
+}

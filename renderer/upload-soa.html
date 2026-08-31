@@ -205,6 +205,17 @@
   }
 
   #logBox { flex: 1; margin: 10px 0 0 0; min-height: 0; }
+  @media (max-width: 900px) {
+    .body { flex-direction:column; overflow-y:auto; }
+    .body .col:first-child, .body .col:last-child { flex:none; min-height:320px; }
+    .soa-guide { align-items:flex-start; }
+  }
+  @media (max-width: 620px) {
+    .section-row { flex-direction:column; }
+    #browseBtn { width:100%; }
+    .soa-guide { flex-direction:column; gap:7px; }
+    .soa-guide-list li { white-space:normal; }
+  }
 </style>
 </head>
 <body>

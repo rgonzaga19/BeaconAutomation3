@@ -27,6 +27,16 @@ sidebarToggle.addEventListener("click", () => {
   window.beabots?.setWorkspaceSidebarWidth(collapsed ? 68 : 232);
 });
 
+function playDashboardEntrance() {
+  const shell = document.getElementById("dashboardShell");
+  shell.classList.remove("dashboard-entering");
+  void shell.offsetWidth;
+  shell.classList.add("dashboard-entering");
+  setTimeout(() => shell.classList.remove("dashboard-entering"), 1000);
+}
+
+window.beabots?.onDashboardEnter(playDashboardEntrance);
+
 const workspaceButtons = {
   cf2: document.getElementById("btnCf2"),
   uploadSoa: document.getElementById("btnUploadSoa"),

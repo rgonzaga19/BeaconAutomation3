@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld("beabots", {
     ipcRenderer.removeAllListeners("workspace:active");
     ipcRenderer.on("workspace:active", (_event, key) => callback(key));
   },
+  onDashboardEnter: (callback) => {
+    ipcRenderer.removeAllListeners("dashboard:enter");
+    ipcRenderer.on("dashboard:enter", () => callback());
+  },
   releaseForceLock: () => ipcRenderer.invoke("app:releaseForceLock"),
   quitApp: () => ipcRenderer.invoke("app:quitApp"),
 

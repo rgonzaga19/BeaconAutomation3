@@ -2,187 +2,131 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Login</title>
+<title>Beabots Login</title>
 <script src="js/theme.js"></script>
 <link rel="stylesheet" href="css/theme.css" />
 <style>
-  body { overflow: hidden; }
-  /* Ensure the content stretches and leaves no unused space below */
-  .panel { margin: 0 16px; flex: 1; display: flex; flex-direction: column; }
-  .btn-row { flex-shrink: 0; }
+  body { overflow:hidden; }
+  .login-layout { flex:1; min-height:0; display:grid; grid-template-columns:46% 54%; }
+  .brand-panel { position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:center; align-items:center; padding:42px; color:var(--text-pri); background:linear-gradient(145deg,var(--accent2),var(--accent)); }
+  .brand-panel::before { content:""; position:absolute; inset:0; opacity:.28; background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,.5) 1px,transparent 0); background-size:22px 22px; mask-image:linear-gradient(to bottom right,#000,transparent 62%); }
+  .brand-panel::after { content:""; position:absolute; left:-12%; right:-12%; bottom:-105px; height:180px; border-radius:50% 50% 0 0; background:rgba(5,18,28,.18); transform:rotate(-4deg); }
+  .brand-content { position:relative; z-index:1; width:100%; max-width:330px; text-align:center; }
+  .brand-mark { width:92px; height:92px; margin:0 auto 20px; display:grid; place-items:center; border-radius:24px; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.35); box-shadow:0 18px 45px rgba(3,25,30,.2); backdrop-filter:blur(8px); }
+  .brand-mark img { width:58px; height:58px; object-fit:contain; }
+  .brand-name { margin:0; color:#fff; font-size:27px; font-weight:900; letter-spacing:1.5px; }
+  .brand-tagline { max-width:280px; margin:10px auto 0; color:rgba(255,255,255,.82); font-size:12.5px; line-height:1.6; }
+  .brand-rule { width:72px; height:2px; margin:22px auto; background:rgba(255,255,255,.7); border-radius:2px; }
+  .brand-features { display:grid; grid-template-columns:repeat(3,1fr); gap:15px; }
+  .brand-feature { color:rgba(255,255,255,.78); font-size:10px; line-height:1.35; }
+  .feature-icon { width:30px; height:30px; margin:0 auto 7px; display:grid; place-items:center; border:1px solid rgba(255,255,255,.35); border-radius:9px; color:#fff; font-size:14px; }
 
-  .field-row { padding: 12px 14px 0 14px; }
-  .field-row label {
-    display: block;
-    color: var(--accent);
-    font-size: 9px;
-    font-weight: bold;
-    margin-bottom: 4px;
+  .form-panel { display:flex; align-items:center; justify-content:center; padding:46px; background:var(--bg-dark); }
+  .login-card { width:100%; max-width:390px; padding:30px; background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-lg); box-shadow:var(--shadow-md); }
+  .login-card h1 { margin:0; color:var(--text-pri); font-size:22px; font-weight:850; letter-spacing:.2px; }
+  .login-card .intro { margin:7px 0 24px; color:var(--text-sec); font-size:12px; }
+  .login-field { margin-bottom:16px; }
+  .login-field label { display:block; margin-bottom:7px; color:var(--text-sec); font-size:10px; font-weight:800; letter-spacing:.45px; }
+  .input-shell { display:flex; align-items:center; gap:9px; padding:0 12px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); transition:border-color 140ms ease,box-shadow 140ms ease; }
+  .input-shell:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .input-icon { width:18px; color:var(--accent); text-align:center; }
+  .input-shell input { width:100%; height:43px; padding:0; color:var(--text-pri); background:transparent; border:0; outline:0; }
+  .password-toggle { flex:none; padding:5px; color:var(--text-sec); background:transparent; border:0; cursor:pointer; font:700 10px var(--font-ui); }
+  .password-toggle:hover { color:var(--accent); }
+  .login-meta { display:flex; align-items:center; justify-content:flex-end; min-height:20px; margin:-3px 0 13px; }
+  .session-note { color:var(--text-sec); font-size:9.5px; }
+  #loginBtn { width:100%; height:43px; font-weight:800; letter-spacing:.6px; }
+  .login-status { min-height:18px; margin-top:12px; color:var(--text-sec); text-align:center; font-size:10.5px; }
+  .login-status.error { color:var(--error); }
+  .login-status.success { color:var(--success); }
+  .login-transition-wash { position:absolute; z-index:20; inset:0; pointer-events:none; background:radial-gradient(circle at 73% 70%,var(--accent) 0,var(--accent2) 28%,var(--bg-dark) 72%); clip-path:circle(0% at 73% 70%); opacity:0; }
+  body.login-success-transition .login-transition-wash { animation:login-wash 900ms cubic-bezier(.65,0,.2,1) forwards; }
+  body.login-success-transition .brand-panel { animation:brand-exit 720ms cubic-bezier(.55,0,.25,1) forwards; }
+  body.login-success-transition .login-card { animation:card-exit 650ms cubic-bezier(.55,0,.25,1) forwards; }
+  body.login-success-transition #loginBtn { position:relative; overflow:hidden; box-shadow:0 0 0 4px var(--accent-soft),0 0 30px var(--accent); }
+  body.login-success-transition #loginBtn::after { content:""; position:absolute; inset:-100% -35%; background:linear-gradient(100deg,transparent 35%,rgba(255,255,255,.72) 50%,transparent 65%); animation:login-shine 620ms ease-out forwards; }
+  @keyframes brand-exit { to { opacity:0; transform:translateX(-70px) scale(.96); filter:blur(5px); } }
+  @keyframes card-exit { to { opacity:0; transform:translateX(80px) scale(.94); filter:blur(4px); } }
+  @keyframes login-wash { 0% { opacity:0; clip-path:circle(0% at 73% 70%); } 18% { opacity:.96; } 100% { opacity:1; clip-path:circle(145% at 73% 70%); } }
+  @keyframes login-shine { from { transform:translateX(-70%) rotate(8deg); } to { transform:translateX(70%) rotate(8deg); } }
+  @media (max-width:900px) {
+    .login-layout { grid-template-columns:40% 60%; }
+    .brand-panel { padding:28px 20px; }
+    .brand-mark { width:72px; height:72px; }
+    .brand-mark img { width:46px; height:46px; }
+    .brand-name { font-size:22px; }
+    .brand-features { gap:8px; }
+    .form-panel { padding:28px; }
   }
-  .field-row input {
-    width: 100%;
-    padding: 5px 6px;
+  @media (max-width:720px) {
+    .login-layout { grid-template-columns:1fr; }
+    .brand-panel { display:none; }
+    .form-panel { padding:22px; }
+    .login-card { max-width:440px; }
   }
-
-  .toggle-row {
-    padding: 6px 14px 0 14px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--text-sec);
-    font-size: 8pt;
-    cursor: pointer;
+  @media (max-height:620px) {
+    .brand-rule { margin:14px auto; }
+    .form-panel { padding-top:18px; padding-bottom:18px; }
+    .login-card { padding:22px 26px; }
+    .login-card .intro { margin-bottom:16px; }
   }
-
-  #accessKeyContainer { padding: 12px 14px 0 14px; }
-  #accessKeyField { display: none; }
-  #accessKeyToggle {
-    color: var(--accent);
-    font-size: 8pt;
-    cursor: pointer;
-  }
-
-  .session-warning {
-    color: var(--warning);
-    font-size: 8pt;
-    text-align: right;
-    padding: 8px 14px 14px 14px;
-  }
-
-  .server-row {
-    padding: 4px 14px 0 14px;
-    margin-top: auto;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .server-row label {
-    color: var(--accent);
-    font-size: 9px;
-    font-weight: bold;
-  }
-
-  .server-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .server-label {
-    font-size: 11px;
-    font-weight: bold;
-    color: var(--text-sec);
-    cursor: pointer;
-    transition: color 0.15s;
-  }
-
-  .server-label.active {
-    color: var(--accent);
-  }
-
-  .toggle-track {
-    width: 40px;
-    height: 18px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    position: relative;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-
-  .toggle-thumb {
-    position: absolute;
-    top: 1px;
-    left: 1px;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--accent);
-    transition: transform 0.15s ease;
-    box-shadow: 0 0 4px var(--accent);
-  }
-
-  .toggle-track.on .toggle-thumb {
-    transform: translateX(22px);
-  }
-
-  .btn-row {
-    display: flex;
-    justify-content: flex-end;
-    gap: 6px;
-    padding: 10px 16px 16px 16px;
+  @media (prefers-reduced-motion:reduce) {
+    body.login-success-transition .login-transition-wash { animation-duration:180ms; }
+    body.login-success-transition .brand-panel,
+    body.login-success-transition .login-card,
+    body.login-success-transition #loginBtn::after { animation:none; }
   }
 </style>
 </head>
 <body>
   <div class="app-window no-glow">
-
     <div class="titlebar">
-      <span class="icon">🔐</span>
-      <span class="title">LOGIN</span>
+      <span class="icon"><img src="../bot.ico" alt=""></span>
+      <span class="title">BEABOTS — SECURE LOGIN</span>
       <span class="spacer"></span>
-      <div class="titlebar-btn" id="btnThemeToggle" title="Toggle theme">🌙</div>
       <div class="titlebar-btn" id="btnMinimize">─</div>
-      <div class="titlebar-btn close" id="btnClose">✕</div>
+      <div class="titlebar-btn close" id="btnClose">×</div>
     </div>
 
-    <div class="panel">
-      <div class="field-row">
-        <label>▸ USERNAME</label>
-        <input type="text" id="username" />
-      </div>
-
-      <div class="field-row">
-        <label>▸ PASSWORD</label>
-        <input type="password" id="password" />
-      </div>
-      <label class="toggle-row">
-        <input type="checkbox" id="showPassword" />
-        Show password
-      </label>
-
-      <div id="accessKeyContainer">
-        <div id="accessKeyField">
-          <label>▸ ACCESS KEY</label>
-          <input type="text" id="accessKey" />
-        </div>
-        <span id="accessKeyToggle">👁  View Access Key</span>
-      </div>
-
-      <div class="server-row">
-        <label>▸ APPEARANCE</label>
-        <div class="server-toggle" id="themeToggleRow">
-          <span class="server-label" data-value="dark" id="labelDark">DARK</span>
-          <div class="toggle-track" id="appearanceToggleTrack">
-            <div class="toggle-thumb"></div>
+    <main class="login-layout">
+      <section class="brand-panel">
+        <div class="brand-content">
+          <div class="brand-mark"><img src="../bot.ico" alt="Beabots"></div>
+          <h1 class="brand-name">BEABOTS</h1>
+          <p class="brand-tagline">Smart automation for faster, more reliable PhilHealth Beacon claims processing.</p>
+          <div class="brand-rule"></div>
+          <div class="brand-features">
+            <div class="brand-feature"><div class="feature-icon">◇</div>Modern<br>Workflow</div>
+            <div class="brand-feature"><div class="feature-icon">▣</div>Claims<br>Automation</div>
+            <div class="brand-feature"><div class="feature-icon">✓</div>Secure<br>Access</div>
           </div>
-          <span class="server-label" data-value="light" id="labelLight">LIGHT</span>
         </div>
-      </div>
+      </section>
 
-      <div class="server-row">
-        <label>▸ BEACON SERVER</label>
-        <div class="server-toggle" id="serverToggle">
-          <span class="server-label" data-value="s2" id="labelS2">S2</span>
-          <div class="toggle-track" id="toggleTrack">
-            <div class="toggle-thumb"></div>
+      <section class="form-panel">
+        <form class="login-card" id="loginForm">
+          <h1>Welcome back</h1>
+          <p class="intro">Enter your Beacon credentials to continue.</p>
+
+          <div class="login-field">
+            <label for="username">USERNAME</label>
+            <div class="input-shell"><span class="input-icon">@</span><input type="text" id="username" autocomplete="username" placeholder="Enter your username" /></div>
           </div>
-          <span class="server-label" data-value="s4" id="labelS4">S4</span>
-        </div>
-      </div>
 
-      <div class="session-warning">⚠  Login will clear the active session.</div>
-    </div>
+          <div class="login-field">
+            <label for="password">PASSWORD</label>
+            <div class="input-shell"><span class="input-icon">●</span><input type="password" id="password" autocomplete="current-password" placeholder="Enter your password" /><button class="password-toggle" id="showPassword" type="button">Show</button></div>
+          </div>
 
-    <div class="btn-row">
-      <button class="cyber-btn" id="loginBtn">LOGIN</button>
-    </div>
+          <div class="login-meta"><span class="session-note">A new login refreshes the active Beacon session.</span></div>
+          <button class="solid-btn" id="loginBtn" type="submit">LOG IN</button>
+          <div class="login-status" id="loginStatus" role="status" aria-live="polite"></div>
+        </form>
+      </section>
+    </main>
+    <div class="login-transition-wash" aria-hidden="true"></div>
   </div>
-
   <div id="modalRoot"></div>
-
   <script src="js/common.js"></script>
   <script src="js/login.js"></script>
 </body>

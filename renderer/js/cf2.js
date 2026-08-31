@@ -96,6 +96,8 @@ modeExistingDraftBtn.addEventListener("click", () => setMode("existing_draft"));
 // per-level color tags, unlike the dashboard/Upload SOA logs)
 // ---------------------------------------------------------------------------
 const logBox = document.getElementById("cf2LogBox");
+let cf2RunActive = false;
+let cf2LogStopTimer = null;
 
 function log(text, level = "INFO") {
   const line = document.createElement("div");
@@ -123,6 +125,7 @@ function scrollLogToEnd() {
 // invisible-once-packaged main-process console).
 // ---------------------------------------------------------------------------
 window.beabots?.onServerLog?.(({ level, line }) => {
+  if (!cf2RunActive) return;
   log(line, level === "error" ? "ERROR" : "INFO");
   scrollLogToEnd();
 });
@@ -283,25 +286,63 @@ function buildGuideSteps() {
   ];
 }
 
+function buildCurrentGuideSteps() {
+  const isNewDraft = currentMode === "new_draft";
+  return [
+    {
+      title: "Set the claim period",
+      description: "Select the correct claim year and month before uploading. These values are used to interpret every treatment date in the workbook.",
+      note: "Changing the period requires uploading the workbook again.",
+    },
+    {
+      title: "Choose the workflow mode",
+      description: isNewDraft
+        ? "Use New Draft when Beacon must create a new claim for each patient."
+        : "Use Existing Draft when the claim is already in Beacon and must be located by transmittal number.",
+      note: isNewDraft ? "Column A must contain the Member PIN." : "Column A must contain the existing Transmittal No.",
+    },
+    {
+      title: "Download the matching template",
+      description: "Click Download Excel Template after selecting the mode. New Draft and Existing Draft use different templates and Column A has a different meaning.",
+      note: "Do not reuse a workbook prepared for the other mode.",
+    },
+    {
+      title: "Complete columns A to E",
+      description: "Enter Column A identifier, B patient name, C doctor, D accreditation number, and E treatment dates. Add one patient per row and save the workbook.",
+      note: "Keep Sheet1, headers, column order, and file format unchanged.",
+    },
+    {
+      title: "Upload and review the workbook",
+      description: "Click Upload Excel File. Check the detected patient count, identifiers, doctor details, parsed dates, first and last treatment dates, and session totals in the execution log.",
+      note: "Correct the workbook and upload it again if anything is wrong.",
+    },
+    {
+      title: "Run, monitor, and verify",
+      description: "Click Start Automation only after the uploaded data is correct. Monitor the execution log and final summary for successful, skipped, or failed records.",
+      note: "Always verify the completed draft, CF2, signatories, and preview in Beacon.",
+    },
+  ];
+}
+
 document.getElementById("guideCard").addEventListener("click", () => {
-  const stepsHtml = buildGuideSteps().map(([number, icon, title, description]) => `
+  const stepsHtml = buildCurrentGuideSteps().map((step, index) => `
     <div class="guide-step">
-      <div class="badge-col">
-        <div class="badge">${number}</div>
-        <div class="step-icon">${icon}</div>
-      </div>
-      <div>
-        <div class="step-title">${title}</div>
-        <div class="step-desc">${description}</div>
-      </div>
+      <div class="guide-step-number">${index + 1}</div>
+      <div class="step-title">${step.title}</div>
+      <div class="step-desc">${step.description}</div>
+      <div class="guide-step-note">${step.note}</div>
     </div>`).join("");
 
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
     <div class="modal-overlay guide-modal">
       <div class="modal-box">
-        <h2>CF2 USER GUIDE</h2>
-        ${stepsHtml}
+        <h2>CF2 WORKFLOW GUIDE</h2>
+        <div class="guide-intro">
+          <span>Follow these steps in order. The guide updates for the selected workflow mode.</span>
+          <span class="guide-mode-pill">${currentMode === "new_draft" ? "NEW DRAFT" : "EXISTING DRAFT"}</span>
+        </div>
+        <div class="guide-steps-grid">${stepsHtml}</div>
         <div class="modal-actions" style="justify-content: center; margin-top: 10px;">
           <button class="cyber-btn" id="guideOkBtn">OK</button>
         </div>
@@ -329,6 +370,8 @@ function setControlsRunning(running) {
 startBtn.addEventListener("click", async () => {
   if (!hasPatientRecords) return; // matches: if len(patient_records) == 0: return
 
+  if (cf2LogStopTimer) clearTimeout(cf2LogStopTimer);
+  cf2RunActive = true;
   setControlsRunning(true);
 
   const result = await fetchJSON("/api/cf2/start", { method: "POST" });
@@ -337,6 +380,7 @@ startBtn.addEventListener("click", async () => {
     log(`ERROR: ${result.error}`);
     scrollLogToEnd();
     setControlsRunning(false);
+    cf2RunActive = false;
   }
 });
 
@@ -347,6 +391,7 @@ startBtn.addEventListener("click", async () => {
 const socket = io(API_BASE);
 
 socket.on("log", (data) => {
+  if (!cf2RunActive) return;
   log(data.message);
   scrollLogToEnd();
 });
@@ -381,4 +426,11 @@ socket.on("cf2_done", (data) => {
   }
 
   setControlsRunning(false);
+  // stdout and Socket.IO travel over separate channels. Keep a short grace
+  // period so final buffered CF2 lines arrive, then detach this panel from
+  // the shared stream before SOA or CF4 starts.
+  cf2LogStopTimer = setTimeout(() => {
+    cf2RunActive = false;
+    cf2LogStopTimer = null;
+  }, 1200);
 });

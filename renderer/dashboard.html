@@ -50,6 +50,22 @@
   .welcome-icon { font-size:48px; color:var(--accent); }
   .welcome-text h2 { font-size:24px; color:var(--text-pri); margin:0; font-weight:800; letter-spacing:.5px; }
   .welcome-text p { font-size:13px; color:var(--text-sec); margin:8px 0 0; line-height:1.5; }
+  .app-window.dashboard-entering { animation:dashboard-shell-in 620ms cubic-bezier(.2,.85,.25,1) both; }
+  .app-window.dashboard-entering .titlebar { animation:dashboard-drop-in 520ms 80ms cubic-bezier(.2,.85,.25,1) both; }
+  .app-window.dashboard-entering .toolbar { animation:dashboard-drop-in 540ms 135ms cubic-bezier(.2,.85,.25,1) both; }
+  .app-window.dashboard-entering .sidebar { animation:dashboard-sidebar-in 650ms 150ms cubic-bezier(.16,1,.3,1) both; }
+  .app-window.dashboard-entering .body { animation:dashboard-content-in 640ms 260ms cubic-bezier(.16,1,.3,1) both; }
+  @keyframes dashboard-shell-in { from { opacity:0; transform:scale(.965); filter:saturate(1.45) brightness(1.2); } to { opacity:1; transform:scale(1); filter:none; } }
+  @keyframes dashboard-drop-in { from { opacity:0; transform:translateY(-22px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes dashboard-sidebar-in { from { opacity:0; transform:translateX(-58px); } to { opacity:1; transform:translateX(0); } }
+  @keyframes dashboard-content-in { from { opacity:0; transform:translateY(25px) scale(.975); } to { opacity:1; transform:translateY(0) scale(1); } }
+  @media (prefers-reduced-motion:reduce) {
+    .app-window.dashboard-entering,
+    .app-window.dashboard-entering .titlebar,
+    .app-window.dashboard-entering .toolbar,
+    .app-window.dashboard-entering .sidebar,
+    .app-window.dashboard-entering .body { animation-duration:160ms; animation-delay:0ms; }
+  }
   @media (max-width:500px) {
     .sidebar { width:100%; flex-basis:100%; }
     .sidebar.collapsed { width:68px; flex-basis:68px; }
@@ -59,7 +75,7 @@
 </style>
 </head>
 <body>
-  <div class="app-window no-glow">
+  <div class="app-window no-glow" id="dashboardShell">
     <div class="titlebar">
       <span class="icon"><img src="../bot.ico" alt=""></span>
       <span class="title">BEABOTS - BEACON AUTOMATION</span>

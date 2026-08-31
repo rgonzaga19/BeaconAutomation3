@@ -647,22 +647,32 @@ function createWindow(key, htmlFile, options = {}) {
 }
 
 function createLoginWindow() {
+  const { width: availableWidth, height: availableHeight } = screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(1450, Math.floor(availableWidth * 0.92));
+  const height = Math.min(800, Math.floor(availableHeight * 0.92));
   return createWindow("login", "login.html", {
-    width: 380,
-    height: 390,
-    resizable: false,
+    width,
+    height,
+    minWidth: Math.min(720, width),
+    minHeight: Math.min(560, height),
+    resizable: true,
+    windowOverrides: { center: true },
   });
 }
 
 function createDashboardWindow() {
+  const { width: availableWidth, height: availableHeight } = screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(1450, Math.floor(availableWidth * 0.92));
+  const height = Math.min(800, Math.floor(availableHeight * 0.92));
   const win = createWindow("dashboard", "dashboard.html", {
-    // CF2 is the sizing baseline for the complete embedded workspace.
-    // CF2, Upload SOA, and CF4 all share this exact fixed canvas.
-    width: 1450,
-    height: 800,
-    minWidth: 1450,
-    minHeight: 800,
-    resizable: false,
+    // CF2's 1450x800 canvas remains the preferred size, capped to the
+    // monitor work area for smaller screens and Windows display scaling.
+    width,
+    height,
+    minWidth: Math.min(900, width),
+    minHeight: Math.min(600, height),
+    resizable: true,
+    windowOverrides: { center: true },
   });
   if (!win.__workspaceLayoutBound) {
     win.__workspaceLayoutBound = true;
@@ -853,6 +863,16 @@ ipcMain.handle("nav:goHome", (event) => {
 ipcMain.handle("nav:goToDashboard", (event) => {
   hideLogin();
   showDashboard();
+  const dash = windows.dashboard;
+  if (!dash || dash.isDestroyed()) return;
+  const sendEntrance = () => {
+    if (!dash.isDestroyed()) dash.webContents.send("dashboard:enter");
+  };
+  if (dash.webContents.isLoadingMainFrame()) {
+    dash.webContents.once("did-finish-load", sendEntrance);
+  } else {
+    sendEntrance();
+  }
 });
 
 // Logout — hide dashboard and show login window
