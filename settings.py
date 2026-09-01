@@ -20,7 +20,9 @@ def load_settings():
             "password": "",
             "access_key": "",
             "server": "s4",
-            "facility_id": 263
+            "facility_id": 263,
+            "transmittal_search_days": 31,
+            "transmittal_package_type": 7
         }
 
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -36,6 +38,10 @@ def load_settings():
     settings.setdefault("server", "s4")
     # Older config.json files may not have facility_id; default to 263 for backward compatibility
     settings.setdefault("facility_id", 263)
+    # Transmittal search range (in days). Increase if searching for older transmittals.
+    settings.setdefault("transmittal_search_days", 31)
+    # Transmittal package type filter. Set to null/null to search all package types.
+    settings.setdefault("transmittal_package_type", 7)
 
     return settings
 

@@ -11,12 +11,103 @@ from settings import load_settings
 DEFAULT_SOA_FOLDER = Path.home() / "Downloads" / "SOA"
 
 def get_facility_id():
-    """Get the user's facility ID from settings, with fallback to default."""
+    """Get the logged-in user's Beacon client/facility ID."""
+    return get_facility_ids()[0]
+
+
+def get_facility_ids():
+    """Get all Beacon client/facility IDs available to the logged-in account."""
+    try:
+        client_ids = soa_api.get_client_ids()
+        logger.info(
+            f"Using Beacon clientId(s)={client_ids} for the logged-in account."
+        )
+        return [int(client_id) for client_id in client_ids]
+    except Exception as exc:
+        logger.warning(
+            "Could not resolve Beacon clientId(s) from the logged-in account; "
+            f"falling back to configured facility_id ({exc})."
+        )
+
     try:
         settings = load_settings()
-        return int(settings.get("facility_id", 263))
+        return [int(settings.get("facility_id", 263))]
     except (TypeError, ValueError):
-        return 263
+        return [263]
+
+
+def get_transmittal_search_days():
+    """Get the transmittal search range in days from settings."""
+    try:
+        settings = load_settings()
+        days = int(settings.get("transmittal_search_days", 31))
+        return max(1, days)  # Ensure at least 1 day
+    except (TypeError, ValueError):
+        return 31
+
+
+def get_transmittal_package_type():
+    """Get the transmittal package type filter from settings.
+
+    Returns the package type integer (e.g., 7), or None to search all package types.
+    """
+    try:
+        settings = load_settings()
+        pkg_type = settings.get("transmittal_package_type", 7)
+        if pkg_type is None:
+            return None
+        return int(pkg_type)
+    except (TypeError, ValueError):
+        return 7
+
+
+def diagnose_transmittal_search():
+    """DIAGNOSTIC FUNCTION: Run this to help troubleshoot 'transmittal not found' issues.
+
+    This function will:
+    1. Report current settings
+    2. List all available transmittals in the facility
+    3. Help identify the correct facility_id
+
+    Call this when transmittals are not being found despite correct facility_id.
+    """
+    facility_id = get_facility_id()
+    search_days = get_transmittal_search_days()
+    package_type = get_transmittal_package_type()
+
+    logger.info("\n" + "=" * 70)
+    logger.info("TRANSMITTAL DIAGNOSTIC REPORT")
+    logger.info("=" * 70)
+    logger.info(f"Current Settings:")
+    logger.info(f"  - facility_id: {facility_id}")
+    logger.info(f"  - transmittal_search_days: {search_days}")
+    logger.info(f"  - transmittal_package_type: {package_type if package_type else 'ANY'}")
+    logger.info("\nAttempting to list available transmittals...")
+
+    transmittals = soa_api.list_all_transmittals(
+        client_id=facility_id,
+        days_back=search_days,
+        package_type=package_type,
+        limit=50
+    )
+
+    if transmittals:
+        logger.success(f"Found {len(transmittals)} transmittals in facility {facility_id}")
+    else:
+        logger.warning(
+            f"No transmittals found in facility {facility_id}. "
+            f"This could mean:\n"
+            f"  1. facility_id={facility_id} is incorrect (check your settings)\n"
+            f"  2. User lacks permission to view transmittals\n"
+            f"  3. No transmittals exist in the search date range\n"
+            f"\nTo fix:\n"
+            f"  - Verify facility_id in Beacon UI\n"
+            f"  - Update config.json with the correct facility_id\n"
+            f"  - Try increasing transmittal_search_days to search older transmittals\n"
+            f"  - Try setting transmittal_package_type to null in config.json"
+        )
+
+    logger.info("=" * 70 + "\n")
 
 # Common Filipino compound-surname particles.
 SURNAME_PARTICLES = {
@@ -344,8 +435,23 @@ class SOAAutomation:
             logger.info("=" * 60)
 
             # Preserve the proven selection rule: exact transmittal, first claim.
-            facility_id = get_facility_id()
-            transmittal = soa_api.get_transmittal(transmittal_no, client_id=facility_id)
+            facility_ids = get_facility_ids()
+            search_days = get_transmittal_search_days()
+            package_type = get_transmittal_package_type()
+            transmittal = None
+            facility_id = facility_ids[0]
+
+            for current_facility_id in facility_ids:
+                facility_id = current_facility_id
+                transmittal = soa_api.get_transmittal(
+                    transmittal_no,
+                    client_id=current_facility_id,
+                    days_back=search_days,
+                    package_type=package_type
+                )
+                if transmittal:
+                    break
+
             if not transmittal:
                 result["status"] = "skipped"
                 result["message"] = "Transmittal not found"

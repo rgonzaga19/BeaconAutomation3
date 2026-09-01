@@ -4,14 +4,17 @@ Business rules stay in soa_automation.py.  This module only mirrors the
 HTTP calls observed in Beacon's successful SOA workflow.
 """
 from pathlib import Path
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import requests
 import browser_session
 
-BASE_URL = "https://beacon-s4.bizbox.ph"
 ECLAIMS_API_BASE = "https://eclaimsapi-s4.azurewebsites.net/api/EClaims/v3"
+DEFAULT_TRANSMITTAL_PACKAGE_TYPES = (7, 1, 2, 3, 4, 5, 6, 8, 9, 10, 0)
 
 class SoaApiError(RuntimeError): pass
+
+def _base_url():
+    return browser_session._get_beacon_url().rstrip("/")
 
 def _headers(json=True):
     token = browser_session.get_auth_token()
@@ -32,51 +35,243 @@ def _json(r):
     try: return r.json()
     except ValueError: return r.text.strip('"')
 
-def get_transmittal(transmittal_no, client_id=263):
-    # Match Beacon's Transmittals search request from the captured UI flow.
-    # The endpoint expects the table's date window and paging parameters even
-    # when an exact transmittal number is supplied in ``que``.
-    today = datetime.now().date()
-    date_from = today - timedelta(days=31)
-    date_to = today + timedelta(days=1)
+
+def _get(path, params=None):
+    return _json(requests.get(_base_url() + path, headers=_headers(), params=params, timeout=30))
+
+
+_client_ids_cache = None
+_client_ids_cache_user_id = None
+
+
+def get_client_ids():
+    """Return all Beacon clientIds assigned to the currently logged-in account."""
+    global _client_ids_cache, _client_ids_cache_user_id
+
+    user_id = browser_session.get_user_id()
+    if not user_id:
+        raise SoaApiError("No userId available from Beacon auth token.")
+
+    if _client_ids_cache is not None and _client_ids_cache_user_id == user_id:
+        return _client_ids_cache
+
+    clients = _get("/api/Account/GetAllClientsByUserId", params={"userId": user_id})
+    if not clients:
+        raise SoaApiError(f"GetAllClientsByUserId returned no clients for userId={user_id}.")
+
+    _client_ids_cache = [int(client["id"]) for client in clients if client.get("id")]
+    if not _client_ids_cache:
+        raise SoaApiError(f"GetAllClientsByUserId returned clients without ids for userId={user_id}.")
+
+    _client_ids_cache_user_id = user_id
+    return _client_ids_cache
+
+
+def get_client_id():
+    """Return the primary Beacon clientId assigned to the logged-in account."""
+    return get_client_ids()[0]
+
+
+def transmittal_search_date_window(days_back=31):
+    """Return Beacon's rolling Transmittals UI date window in UTC strings."""
+    ph_tz = timezone(timedelta(hours=8))
+    today = datetime.now(ph_tz).date()
+    start_local = datetime.combine(
+        today - timedelta(days=days_back), datetime.min.time(), tzinfo=ph_tz
+    )
+    end_local = datetime.combine(today, datetime.max.time(), tzinfo=ph_tz).replace(
+        microsecond=999000
+    )
+    return (
+        start_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        end_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.999Z"),
+    )
+
+
+def _transmittal_package_types_to_try(package_type):
+    if package_type is None:
+        return list(DEFAULT_TRANSMITTAL_PACKAGE_TYPES)
+
+    package_types = [int(package_type)]
+    for candidate in DEFAULT_TRANSMITTAL_PACKAGE_TYPES:
+        if candidate not in package_types:
+            package_types.append(candidate)
+    return package_types
+
+
+def _search_transmittal_once(transmittal_no, client_id, date_from, date_to, package_type):
+    params = {
+        "clientId": client_id,
+        "dateFrom": date_from,
+        "dateTo": date_to,
+        "itemStart": 0,
+        "itemEnd": 100,
+        "que": str(transmittal_no),
+        "transmittalPackageType": package_type,
+    }
 
     r=requests.get(
-        BASE_URL+"/api/PHICTransmittal/GetAllPHICTransmittal",
+        _base_url()+"/api/PHICTransmittal/GetAllPHICTransmittal",
         headers=_headers(),
-        params={
-            "clientId": client_id,
-            "dateFrom": date_from.strftime("%Y-%m-%dT16:00:00.000Z"),
-            "dateTo": date_to.strftime("%Y-%m-%dT15:59:59.999Z"),
-            "itemStart": 0,
-            "itemEnd": 30,
-            "que": str(transmittal_no),
-            "transmittalPackageType": 7,
-        },
+        params=params,
         timeout=30,
     )
-    data=_json(r) or {}; rows=data.get("transmittalList") or []
-    exact=[x for x in rows if str(x.get("transmittalNumber",""))==str(transmittal_no)]
-    return exact[0] if exact else None
+
+    _check(r)
+    data=_json(r) or {}
+    return data.get("transmittalList") or []
+
+
+def get_transmittal(transmittal_no, client_id=263, days_back=31, package_type=7):
+    """Search for a transmittal with comprehensive logging and flexible date range.
+
+    Args:
+        transmittal_no: The transmittal number to find
+        client_id: Beacon facility/client ID (default: 263)
+        days_back: How many days back to search (default: 31). Use larger values
+                   for older transmittals that may not be found in the default range.
+        package_type: Filter by transmittal package type (default: 7). Set to None
+                      to search without this filter if transmittals aren't being found.
+
+    Returns:
+        The exact transmittal dict, or None if not found.
+
+    Raises:
+        SoaApiError: If the API request fails (HTTP error, auth failure, etc.)
+    """
+    from logger import logger
+
+    transmittal_no = str(transmittal_no).strip()
+    date_from, date_to = transmittal_search_date_window(days_back)
+
+    logger.info(
+        f"Searching for transmittal '{transmittal_no}' in facility {client_id} "
+        f"from {date_from} to {date_to} (range: {days_back} days, "
+        f"package_type={package_type if package_type is not None else 'ANY'})"
+    )
+
+    logger.info(f"API Request: dateFrom={date_from}, dateTo={date_to}")
+
+    rows = []
+    for current_package_type in _transmittal_package_types_to_try(package_type):
+        try:
+            rows = _search_transmittal_once(
+                transmittal_no,
+                client_id,
+                date_from,
+                date_to,
+                current_package_type,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Search failed with package_type={current_package_type}: {e}"
+            )
+            continue
+
+        logger.info(
+            f"Beacon returned {len(rows)} transmittals with package_type={current_package_type}"
+        )
+
+        if rows:
+            logger.info(f"Sample transmittals: {[x.get('transmittalNumber') for x in rows[:3]]}")
+
+        exact=[x for x in rows if str(x.get("transmittalNumber",""))==str(transmittal_no)]
+
+        if exact:
+            logger.success(
+                f"Found transmittal '{transmittal_no}' with package_type={current_package_type}"
+            )
+            return exact[0]
+
+    logger.warning(
+        f"Transmittal '{transmittal_no}' NOT found in search results ({len(rows)} total returned). "
+        f"Possible causes: (1) Outside {days_back}-day search range (try increasing 'transmittal_search_days' in config.json), "
+        f"(2) Wrong facility_id={client_id} (verify in settings), "
+        f"or (3) User lacks permission to this transmittal"
+    )
+    return None
+
+
+def list_all_transmittals(client_id=263, days_back=31, package_type=7, limit=20):
+    """DIAGNOSTIC: List all available transmittals for debugging facility/permission issues.
+
+    Use this to identify:
+    - If the facility_id has any transmittals at all
+    - What transmittal numbers are available
+    - If the package_type filter is too restrictive
+
+    Args:
+        client_id: Facility ID to search
+        days_back: Search range in days
+        package_type: Package type filter (None to search all)
+        limit: Max results to return (default 20)
+
+    Returns:
+        List of transmittal dicts
+    """
+    from logger import logger
+
+    date_from, date_to = transmittal_search_date_window(days_back)
+
+    logger.info(
+        f"[DIAGNOSTIC] Listing transmittals: facility={client_id}, "
+        f"range={date_from} to {date_to}, type={package_type if package_type else 'ANY'}, limit={limit}"
+    )
+
+    params = {
+        "clientId": client_id,
+        "dateFrom": date_from,
+        "dateTo": date_to,
+        "itemStart": 0,
+        "itemEnd": limit,
+        "que": "",  # Empty search to get all transmittals
+    }
+
+    if package_type is not None:
+        params["transmittalPackageType"] = package_type
+
+    try:
+        r=requests.get(
+            _base_url()+"/api/PHICTransmittal/GetAllPHICTransmittal",
+            headers=_headers(),
+            params=params,
+            timeout=30,
+        )
+        _check(r)
+        data=_json(r) or {}
+        rows=data.get("transmittalList") or []
+
+        logger.info(f"[DIAGNOSTIC] Found {len(rows)} transmittals:")
+        for t in rows[:limit]:
+            num = t.get("transmittalNumber", "??")
+            ptype = t.get("transmittalPackageType", "??")
+            created = t.get("dateCreated", "??")
+            logger.info(f"  - {num} (type={ptype}, created={created})")
+
+        return rows
+    except Exception as e:
+        logger.error(f"[DIAGNOSTIC] Failed to list transmittals: {e}")
+        return []
 
 def get_claims(transmittal_id):
-    return _json(requests.get(BASE_URL+"/api/PHICClaim/GetAllPHICClaimByPHICTransmittalId",headers=_headers(),params={"transmittalId":transmittal_id},timeout=30))
+    return _json(requests.get(_base_url()+"/api/PHICClaim/GetAllPHICClaimByPHICTransmittalId",headers=_headers(),params={"transmittalId":transmittal_id},timeout=30))
 
 def get_claim(claim_id):
-    return _json(requests.get(BASE_URL+"/api/PHICClaim/GetPHICClaim",headers=_headers(),params={"id":claim_id},timeout=30))
+    return _json(requests.get(_base_url()+"/api/PHICClaim/GetPHICClaim",headers=_headers(),params={"id":claim_id},timeout=30))
 
 def get_cf1(claim_id):
-    return _json(requests.get(BASE_URL+"/api/PHICCF1/GetPHICCF1Summary",headers=_headers(),params={"id":claim_id},timeout=30))
+    return _json(requests.get(_base_url()+"/api/PHICCF1/GetPHICCF1Summary",headers=_headers(),params={"id":claim_id},timeout=30))
 
 def get_charges(claim_id):
     """Return Beacon's current MED and XLSO charge rows exactly as exposed by the claim."""
     meds = _json(requests.get(
-        BASE_URL + "/api/PHICChargesDrugAndMedicineController/GetPHICChargesDrugsAndMedicines",
+        _base_url() + "/api/PHICChargesDrugAndMedicineController/GetPHICChargesDrugsAndMedicines",
         headers=_headers(),
         params={"phicClaimId": claim_id},
         timeout=30,
     )) or []
     xlso = _json(requests.get(
-        BASE_URL + "/api/PHICChargesXLSOController/GetPHICChargesXLSO",
+        _base_url() + "/api/PHICChargesXLSOController/GetPHICChargesXLSO",
         headers=_headers(),
         params={"phicClaimId": claim_id},
         timeout=30,
@@ -107,7 +302,7 @@ def get_charges(claim_id):
 def get_documents(claim_id):
     """Return claim documents; ESA document existence is separate from charge-import state."""
     docs = _json(requests.get(
-        BASE_URL + "/api/PHICDocument/GetPHICDocuments",
+        _base_url() + "/api/PHICDocument/GetPHICDocuments",
         headers=_headers(),
         params={"phicClaimId": claim_id},
         timeout=30,
@@ -176,7 +371,7 @@ def get_soa_state(claim_id):
 def _upload_file(path, endpoint, claim_id=None):
     path=Path(path); params={"phicClaimId":claim_id} if claim_id is not None else None
     with path.open("rb") as f:
-        r=requests.post(BASE_URL+endpoint,headers=_headers(json=False),params=params,
+        r=requests.post(_base_url()+endpoint,headers=_headers(json=False),params=params,
           files={"file_0":(path.name,f,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},timeout=60)
     return _json(r)
 
@@ -272,7 +467,7 @@ def batch_upload_medicines(claim_id, rows):
 
     payload = [_medicine_payload_row(row) for row in valid_rows]
     return _json(requests.post(
-        BASE_URL + "/api/PHICChargesDrugAndMedicineController/BatchUploadCharges",
+        _base_url() + "/api/PHICChargesDrugAndMedicineController/BatchUploadCharges",
         headers=_headers(),
         params={"phicClaimId": claim_id},
         json=payload,
@@ -296,7 +491,7 @@ def batch_upload_xlso(claim_id, rows):
 
     payload = [_xlso_payload_row(row) for row in valid_rows]
     return _json(requests.post(
-        BASE_URL + "/api/PHICChargesXLSOController/BatchUploadXLSO",
+        _base_url() + "/api/PHICChargesXLSOController/BatchUploadXLSO",
         headers=_headers(),
         params={"phicClaimId": claim_id},
         json=payload,
@@ -305,7 +500,7 @@ def batch_upload_xlso(claim_id, rows):
 def get_phic_units():
     """Return Beacon's PHIC unit list used by the XLSO edit dialog."""
     data = _json(requests.get(
-        BASE_URL + "/api/PHICEsoa/GetPHICUnits",
+        _base_url() + "/api/PHICEsoa/GetPHICUnits",
         headers=_headers(),
         params={"search": "undefined"},
         timeout=30,
@@ -316,7 +511,7 @@ def get_phic_units():
 def edit_xlso_charge(row):
     """Save one existing XLSO row using the endpoint captured from Beacon."""
     return _json(requests.put(
-        BASE_URL + "/api/PHICChargesXLSOController/EditPHICChargesXLSO",
+        _base_url() + "/api/PHICChargesXLSOController/EditPHICChargesXLSO",
         headers=_headers(),
         json=row,
         timeout=30,
@@ -324,15 +519,15 @@ def edit_xlso_charge(row):
 
 
 def get_summary(claim_id):
-    return _json(requests.get(BASE_URL+"/api/PHICEsoa/GetSummary",headers=_headers(),params={"PHICClaimId":claim_id},timeout=30))
+    return _json(requests.get(_base_url()+"/api/PHICEsoa/GetSummary",headers=_headers(),params={"PHICClaimId":claim_id},timeout=30))
 def update_summary(payload):
-    return _json(requests.post(BASE_URL+"/api/PHICEsoa/UpdateSummary",headers=_headers(),json=payload,timeout=30))
+    return _json(requests.post(_base_url()+"/api/PHICEsoa/UpdateSummary",headers=_headers(),json=payload,timeout=30))
 def get_esoa_xml(claim_id, facility_id=263):
-    return _json(requests.get(BASE_URL+"/api/PHICEsoa/GetESOAXML",headers=_headers(),params={"claimId":claim_id,"facilityId":facility_id},timeout=30))
+    return _json(requests.get(_base_url()+"/api/PHICEsoa/GetESOAXML",headers=_headers(),params={"claimId":claim_id,"facilityId":facility_id},timeout=30))
 def validate_esoa(payload):
     return _json(requests.post(ECLAIMS_API_BASE+"/ValidateESOA",headers=_headers(),json=payload,timeout=60))
 def generate_and_upload_esoa(claim_id, facility_id=263):
-    return _json(requests.post(BASE_URL+"/api/PHICEsoa/GenerateAndUploadEsoaXML",headers=_headers(),json={"claimId":claim_id,"facilityId":facility_id,"isUpload":True},timeout=60))
+    return _json(requests.post(_base_url()+"/api/PHICEsoa/GenerateAndUploadEsoaXML",headers=_headers(),json={"claimId":claim_id,"facilityId":facility_id,"isUpload":True},timeout=60))
 
 def parse_soa_workbook(path):
     """Parse each patient's SOA workbook dynamically from its own row values.
