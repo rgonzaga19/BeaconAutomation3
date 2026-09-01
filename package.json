@@ -6,6 +6,8 @@
   "author": "Romel Gonzaga",
   "scripts": {
     "start": "electron .",
+    "build:server": "python -m PyInstaller --clean --noconfirm Beabots.spec --distpath python-build --workpath build",
+    "predist": "npm run build:server",
     "dist": "electron-builder"
   },
   "dependencies": {

@@ -7,13 +7,23 @@
 # build.extraResources, which copies python-build/server -> resources/server).
 #
 # Build with:
-#   pyinstaller Beabots.spec --distpath python-build
+#   python -m PyInstaller --clean --noconfirm Beabots.spec --distpath python-build --workpath build
+
+from PyInstaller.utils.hooks import collect_data_files
+
+
+# Requests resolves its default TLS trust store through certifi.where().
+# Keep this explicit even though PyInstaller normally supplies a certifi hook:
+# a backend produced with an incomplete/stale hook set otherwise builds and
+# launches successfully, then fails only when the first HTTPS request is made.
+data_files = [('templates', 'templates')]
+data_files += collect_data_files('certifi')
 
 a = Analysis(
     ['server.py'],
     pathex=[],
     binaries=[],
-    datas=[('templates', 'templates')],
+    datas=data_files,
     hiddenimports=[
         # flask-socketio's threading async mode + its WebSocket driver —
         # PyInstaller's import scanner doesn't always catch these since

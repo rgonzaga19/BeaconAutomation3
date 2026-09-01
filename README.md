@@ -154,15 +154,24 @@ To update the npm version without creating a Git tag:
 npm.cmd version 4.0.2 --no-git-tag-version
 ```
 
-### 2. Build the Python service
+### 2. Install dependencies
 
-From an activated environment with `requirements.txt` installed:
+From an activated Python environment with `requirements.txt` installed:
 
 ```powershell
-python -m PyInstaller --clean --noconfirm Beabots.spec --distpath python-build --workpath build
+python -m pip install -r requirements.txt
+npm.cmd ci
 ```
 
-Expected output:
+### 3. Build the release
+
+```powershell
+npm.cmd run dist
+```
+
+The `predist` script rebuilds the Python service before electron-builder runs,
+so the release cannot silently reuse a stale `python-build\server` directory.
+Expected backend output:
 
 ```text
 python-build\server\server.exe
@@ -170,14 +179,8 @@ python-build\server\_internal\
 python-build\server\_internal\templates\
 ```
 
-`Beabots.spec` bundles both CF2 templates automatically.
-
-### 3. Build Electron and the NSIS package
-
-```powershell
-npm.cmd ci
-npm.cmd run dist
-```
+`Beabots.spec` bundles both CF2 templates and certifi's TLS CA bundle
+automatically.
 
 electron-builder reads `package.json` and creates output under `release\`, normally including:
 
@@ -191,6 +194,7 @@ Verify that the packaged Python service exists:
 
 ```powershell
 Test-Path .\release\win-unpacked\resources\server\server.exe
+Test-Path .\release\win-unpacked\resources\server\_internal\certifi\cacert.pem
 ```
 
 ## Release verification checklist
