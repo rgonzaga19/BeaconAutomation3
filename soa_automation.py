@@ -5,10 +5,18 @@ from datetime import datetime
 from logger import logger
 from reports import report, summarize_error
 import soa_api
+from settings import load_settings
 
 
 DEFAULT_SOA_FOLDER = Path.home() / "Downloads" / "SOA"
-FACILITY_ID = 263
+
+def get_facility_id():
+    """Get the user's facility ID from settings, with fallback to default."""
+    try:
+        settings = load_settings()
+        return int(settings.get("facility_id", 263))
+    except (TypeError, ValueError):
+        return 263
 
 # Common Filipino compound-surname particles.
 SURNAME_PARTICLES = {
@@ -336,7 +344,8 @@ class SOAAutomation:
             logger.info("=" * 60)
 
             # Preserve the proven selection rule: exact transmittal, first claim.
-            transmittal = soa_api.get_transmittal(transmittal_no)
+            facility_id = get_facility_id()
+            transmittal = soa_api.get_transmittal(transmittal_no, client_id=facility_id)
             if not transmittal:
                 result["status"] = "skipped"
                 result["message"] = "Transmittal not found"
@@ -544,7 +553,7 @@ class SOAAutomation:
 
             esoa = soa_api.get_esoa_xml(
                 claim_id,
-                FACILITY_ID,
+                facility_id,
             )
             validation = soa_api.validate_esoa(esoa)
 
@@ -555,7 +564,7 @@ class SOAAutomation:
 
             generated = soa_api.generate_and_upload_esoa(
                 claim_id,
-                FACILITY_ID,
+                facility_id,
             )
 
             if str(generated).lower() != "true":
