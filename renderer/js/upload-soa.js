@@ -88,10 +88,13 @@ function clearLog() {
 // Automate Upload button — same validation order as start_soa_automation()
 // ---------------------------------------------------------------------------
 const automateBtn = document.getElementById("automateBtn");
+const automateBtnLabel = document.getElementById("automateBtnLabel");
 
 function setControlsRunning(running) {
   transmittalsInput.disabled = running;
   automateBtn.disabled = running;
+  automateBtn.classList.toggle("running", running);
+  automateBtnLabel.textContent = running ? "AUTOMATING UPLOAD…" : "AUTOMATE UPLOAD";
   browseBtn.disabled = running;
 }
 

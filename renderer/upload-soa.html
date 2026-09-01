@@ -194,6 +194,20 @@
     box-shadow: none;
   }
   #automateBtn:hover { box-shadow: none; }
+  @property --soa-progress-angle {
+    syntax: "<angle>";
+    initial-value: 0deg;
+    inherits: false;
+  }
+  #automateBtn.running {
+    border: 2px solid transparent;
+    background:
+      linear-gradient(var(--accent), var(--accent)) padding-box,
+      conic-gradient(from var(--soa-progress-angle), transparent 0 68%, var(--text-pri) 78%, transparent 90%) border-box;
+    animation: soa-progress-border .85s linear infinite;
+    opacity: 1;
+  }
+  @keyframes soa-progress-border { to { --soa-progress-angle: 360deg; } }
 
   #logBox { flex: 1; margin: 10px 0 0 0; min-height: 0; }
   @media (max-width: 900px) {
@@ -268,7 +282,7 @@
         </div>
         <button class="solid-btn" id="automateBtn">
           <span class="icon-flat"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4.5v15l13-7.5z"/></svg></span>
-          AUTOMATE UPLOAD
+          <span id="automateBtnLabel">AUTOMATE UPLOAD</span>
         </button>
       </div>
 

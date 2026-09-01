@@ -115,39 +115,13 @@ function hideWorkspacePage() {
 // renderer devtools output, never a single line of what the automation was
 // actually doing or failing on.
 //
-// Fix: forward every line to (a) a persistent log file, so it's there after
-// the fact even if no window happened to be open when it printed, and (b)
-// every open renderer window via IPC, so a log panel in the UI can show it
-// live. Chunks from a 'data' event don't line up with actual log lines (a
+// Forward every line to each open renderer via IPC, so its step-by-step log
+// can show automation activity live. Chunks from a 'data' event don't line
+// up with actual log lines (a
 // single print() can arrive split across chunks, or several prints can
 // arrive in one chunk), so this buffers and splits on '\n' rather than
 // treating each 'data' event as one line.
 // ---------------------------------------------------------------------------
-const LOG_DIR = path.join(app.getPath("userData"), "logs");
-fs.mkdirSync(LOG_DIR, { recursive: true });
-const LOG_FILE = path.join(LOG_DIR, "automation.log");
-
-// Create the file immediately (even empty) rather than waiting for the
-// first write. Without this, shell.showItemInFolder() below has nothing
-// to point at until the automation has actually printed something — on
-// Windows that means "Open Log File" silently does nothing on a fresh
-// install/relaunch instead of opening Explorer at all.
-if (!fs.existsSync(LOG_FILE)) {
-  try {
-    fs.writeFileSync(LOG_FILE, "");
-  } catch (e) {
-    console.error("[logs] could not create log file:", e);
-  }
-}
-let logStream = null;
-
-function getLogStream() {
-  if (!logStream) {
-    logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
-  }
-  return logStream;
-}
-
 function broadcastServerLog(level, line) {
   BrowserWindow.getAllWindows().forEach((win) => {
     if (!win.isDestroyed()) {
@@ -188,13 +162,6 @@ function makeLineForwarder(level) {
         console.error(`[server] ${line}`);
       } else {
         console.log(`[server] ${line}`);
-      }
-
-      try {
-        const ts = new Date().toISOString();
-        getLogStream().write(`[${ts}] [${effectiveLevel}] ${line}\n`);
-      } catch (e) {
-        // Logging failure shouldn't be fatal to the app itself.
       }
 
       broadcastServerLog(effectiveLevel, line);
@@ -480,11 +447,6 @@ function startServer() {
   serverProcess.on("exit", (code) => {
     const line = `exited with code ${code}`;
     console.log(`[server] ${line}`);
-    try {
-      getLogStream().write(`[${new Date().toISOString()}] [info] ${line}\n`);
-    } catch (e) {
-      // ignore
-    }
     broadcastServerLog(code === 0 ? "info" : "error", line);
   });
 }
@@ -1226,34 +1188,6 @@ ipcMain.handle("app:installUpdate", async () => {
 
 
 // ---------------------------------------------------------------------------
-// IPC — server/automation log access (see broadcastServerLog above for the
-// live stream; these are for a renderer that just opened and wants
-// history, or a "show me the log file" button).
-// ---------------------------------------------------------------------------
-ipcMain.handle("logs:getRecent", async (_event, maxLines = 500) => {
-  try {
-    const content = fs.readFileSync(LOG_FILE, "utf-8");
-    const lines = content.split("\n").filter(Boolean);
-    return lines.slice(-maxLines);
-  } catch (e) {
-    return [];
-  }
-});
-
-ipcMain.handle("logs:openFile", async () => {
-  try {
-    if (!fs.existsSync(LOG_FILE)) {
-      fs.writeFileSync(LOG_FILE, "");
-    }
-    shell.showItemInFolder(LOG_FILE);
-    return { opened: true };
-  } catch (e) {
-    console.error("[logs] failed to open log file:", e);
-    return { opened: false, error: String(e) };
-  }
-});
-
-// ---------------------------------------------------------------------------
 // IPC — native dialogs (replace filedialog.askopenfilename /
 // askdirectory / asksaveasfilename)
 // ---------------------------------------------------------------------------
@@ -1354,11 +1288,4 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
   stopServer();
-  if (logStream) {
-    try {
-      logStream.end();
-    } catch (e) {
-      // ignore
-    }
-  }
 });

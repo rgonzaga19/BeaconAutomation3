@@ -243,7 +243,7 @@ Runtime logs are stored under:
 %LOCALAPPDATA%\Beabots\logs\
 ```
 
-The Electron log viewer uses `automation.log` in the Electron `userData` log directory, which resolves to the same Beabots application-data area on Windows.
+CF2 activity is shown live in the **Step-by-Step Log** tab. Other workflows that use the shared Python logger continue to write dated files in this application-data directory.
 
 ## Generated directories
 

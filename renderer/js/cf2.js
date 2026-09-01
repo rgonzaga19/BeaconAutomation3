@@ -95,24 +95,55 @@ modeExistingDraftBtn.addEventListener("click", () => setMode("existing_draft"));
 // Log box (plain single-color box — cf2_window.py's txt_log has no
 // per-level color tags, unlike the dashboard/Upload SOA logs)
 // ---------------------------------------------------------------------------
-const logBox = document.getElementById("cf2LogBox");
+const summaryLogBox = document.getElementById("summaryLogPanel");
+const detailsLogBox = document.getElementById("detailsLogPanel");
+let logBox = summaryLogBox;
 let cf2RunActive = false;
 let cf2LogStopTimer = null;
+let lastDetailLine = "";
+let lastDetailAt = 0;
 
-function log(text, level = "INFO") {
+function log(text, level = "INFO", target = summaryLogBox) {
   const line = document.createElement("div");
   line.className = `log-line ${level}`;
   line.textContent = text;
-  logBox.appendChild(line);
+  target.appendChild(line);
 }
 
 function clearLog() {
-  logBox.innerHTML = "";
+  summaryLogBox.innerHTML = "";
+  detailsLogBox.innerHTML = "";
 }
 
 function scrollLogToEnd() {
   logBox.scrollTop = logBox.scrollHeight;
 }
+
+function detailLog(text, level = "INFO") {
+  // Keep local HTTP access records and duplicated logger callbacks out of
+  // the operator-facing sequence; they are transport noise, not CF2 steps.
+  if (/^(?:127\.0\.0\.1|localhost)\s+-\s+-/.test(text)) return;
+  const now = Date.now();
+  if (text === lastDetailLine && now - lastDetailAt < 1000) return;
+  lastDetailLine = text;
+  lastDetailAt = now;
+  log(text, level, detailsLogBox);
+  detailsLogBox.scrollTop = detailsLogBox.scrollHeight;
+}
+
+document.querySelectorAll(".log-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".log-tab").forEach((item) => {
+      const active = item === tab;
+      item.classList.toggle("active", active);
+      item.setAttribute("aria-selected", String(active));
+    });
+    document.querySelectorAll(".log-panel").forEach((panel) => panel.classList.remove("active"));
+    logBox = document.getElementById(tab.dataset.logPanel);
+    logBox.classList.add("active");
+    scrollLogToEnd();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Raw server/automation stdout+stderr (see preload.js's onServerLog /
@@ -126,19 +157,7 @@ function scrollLogToEnd() {
 // ---------------------------------------------------------------------------
 window.beabots?.onServerLog?.(({ level, line }) => {
   if (!cf2RunActive) return;
-  log(line, level === "error" ? "ERROR" : "INFO");
-  scrollLogToEnd();
-});
-
-// "Open Log File" link — reveals the persisted log file directly (see
-// main.js's LOG_FILE), so a session's full raw output is available even
-// after this window's own log box has been cleared by a mode switch or
-// a new upload.
-document.getElementById("openLogFileLink")?.addEventListener("click", async () => {
-  const result = await window.beabots?.openLogFile?.();
-  if (result && result.opened === false) {
-    showModal("Error", `Unable to open log file.\n\n${result.error}`);
-  }
+  detailLog(line, level === "error" ? "ERROR" : "INFO");
 });
 
 // ---------------------------------------------------------------------------
@@ -181,7 +200,7 @@ uploadBtn.addEventListener("click", async () => {
     log("");
     log("ERROR:");
     log(result.error);
-    scrollLogToEnd();
+    summaryLogBox.scrollTop = summaryLogBox.scrollHeight;
     return;
   }
 
@@ -356,10 +375,12 @@ document.getElementById("guideCard").addEventListener("click", () => {
 // _display_summary, reported over the cf2_done socket event)
 // ---------------------------------------------------------------------------
 const startBtn = document.getElementById("startBtn");
+const startBtnLabel = document.getElementById("startBtnLabel");
 
 function setControlsRunning(running) {
   startBtn.disabled = running;
-  startBtn.textContent = running ? "Running..." : "Start Automation";
+  startBtnLabel.textContent = running ? "Automation Running…" : "Start Automation";
+  startBtn.classList.toggle("running", running);
   uploadBtn.disabled = running;
   claimYearSelect.disabled = running;
   claimMonthSelect.disabled = running;
@@ -372,6 +393,12 @@ startBtn.addEventListener("click", async () => {
 
   if (cf2LogStopTimer) clearTimeout(cf2LogStopTimer);
   cf2RunActive = true;
+  detailsLogBox.innerHTML = "";
+  lastDetailLine = "";
+  lastDetailAt = 0;
+  log("");
+  log("Automation started. Open Step-by-Step Log to follow each action.");
+  summaryLogBox.scrollTop = summaryLogBox.scrollHeight;
   setControlsRunning(true);
 
   const result = await fetchJSON("/api/cf2/start", { method: "POST" });
@@ -392,8 +419,7 @@ const socket = io(API_BASE);
 
 socket.on("log", (data) => {
   if (!cf2RunActive) return;
-  log(data.message);
-  scrollLogToEnd();
+  detailLog(data.message, data.level || "INFO");
 });
 
 socket.on("cf2_done", (data) => {
@@ -422,7 +448,7 @@ socket.on("cf2_done", (data) => {
     });
 
     log("=========================================");
-    scrollLogToEnd();
+    summaryLogBox.scrollTop = summaryLogBox.scrollHeight;
   }
 
   setControlsRunning(false);

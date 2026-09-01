@@ -367,25 +367,16 @@
     padding: 0;
     gap: var(--gap-1);
   }
-  #cf2LogBox { flex: 1; min-height: 0; }
+  .log-tabs { display:flex; gap:4px; padding:3px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); }
+  .log-tab { flex:1; padding:8px 10px; color:var(--text-sec); background:transparent; border:0; border-radius:var(--radius-sm); font:600 10.5px var(--font-ui); cursor:pointer; }
+  .log-tab.active { color:var(--bg-dark); background:var(--accent); }
+  .log-panel { flex:1; min-height:0; display:none; }
+  .log-panel.active { display:block; }
   /* Raw stdout/stderr forwarded from main.js (see cf2.js's onServerLog) —
      level="ERROR" lines get a distinct color so a failure/WARNING print
      from cf2_automation.py actually stands out in the log instead of
      blending into the plain INFO stream. */
   .log-line.ERROR { color: var(--error, #ff6b6b); }
-  .open-log-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    margin-left: auto;
-    color: var(--accent);
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .open-log-link:hover { color: var(--text-pri); }
   #startBtn {
     width: 100%;
     margin-top: 4px;
@@ -399,6 +390,20 @@
     box-shadow: none;
   }
   #startBtn:hover { box-shadow: none; }
+  @property --cf2-progress-angle {
+    syntax: "<angle>";
+    initial-value: 0deg;
+    inherits: false;
+  }
+  #startBtn.running {
+    border: 2px solid transparent;
+    background:
+      linear-gradient(var(--accent), var(--accent)) padding-box,
+      conic-gradient(from var(--cf2-progress-angle), transparent 0 68%, var(--text-pri) 78%, transparent 90%) border-box;
+    animation: cf2-progress-border .85s linear infinite;
+    opacity: 1;
+  }
+  @keyframes cf2-progress-border { to { --cf2-progress-angle: 360deg; } }
 
   /* ---------- User Guide modal (flat: border only, no elevation shadow) ---------- */
   .guide-modal .modal-box { max-width: 620px; max-height: 80vh; overflow-y: auto; padding: var(--gap-3) 26px; box-shadow: none; }
@@ -580,17 +585,16 @@
       </div>
 
       <div class="log-section">
-        <div class="section-label">
-          <span>▸ EXECUTION LOG</span>
-          <span id="openLogFileLink" class="open-log-link" title="Open the full raw log file">
-            <span class="icon-flat"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/></svg></span>
-            Log File
-          </span>
+        <div class="section-label"><span>▸ AUTOMATION ACTIVITY</span></div>
+        <div class="log-tabs" role="tablist" aria-label="Automation logs">
+          <button class="log-tab active" data-log-panel="summaryLogPanel" role="tab" aria-selected="true">Execution Summary</button>
+          <button class="log-tab" data-log-panel="detailsLogPanel" role="tab" aria-selected="false">Step-by-Step Log</button>
         </div>
-        <div class="log-box" id="cf2LogBox"></div>
+        <div class="log-box log-panel active" id="summaryLogPanel" role="tabpanel"></div>
+        <div class="log-box log-panel" id="detailsLogPanel" role="tabpanel"></div>
         <button class="solid-btn" id="startBtn">
           <span class="icon-flat"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4.5v15l13-7.5z"/></svg></span>
-          Start Automation
+          <span id="startBtnLabel">Start Automation</span>
         </button>
       </div>
 
