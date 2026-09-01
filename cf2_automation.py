@@ -11,6 +11,7 @@ from draft_automation import (
     InvalidMemberPinError,
 )
 from draft_title import build_draft_title
+from logger import logger
 
 # Guard against print() crashing an otherwise-successful patient run.
 # When this runs under a packaged .exe, stdout/stderr can be attached to a
@@ -26,6 +27,33 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(errors="replace")
     except (AttributeError, ValueError):
         pass
+
+
+def print(message="", *args, **kwargs):
+    """Send CF2 progress through the application's live logging channel.
+
+    CF2 historically used ``print`` for every step.  A piped child-process
+    stdout stream can be buffered or unavailable in packaged Electron builds,
+    leaving the Step-by-Step Log empty.  Keeping the existing call sites but
+    routing them through ``logger`` makes each line reach both the dated log
+    file and server.py's Socket.IO callback immediately.
+
+    The optional arguments are accepted for compatibility with the built-in;
+    current CF2 call sites only pass a single message.
+    """
+    text = str(message)
+    if args:
+        separator = kwargs.get("sep", " ")
+        text = separator.join((text, *(str(value) for value in args)))
+
+    if text.startswith("ERROR:"):
+        logger.error(text)
+    elif text.startswith("WARNING:") or text.startswith("SKIPPED:"):
+        logger.warning(text)
+    elif text.startswith("SUCCESS:"):
+        logger.success(text)
+    else:
+        logger.info(text)
 
 
 
