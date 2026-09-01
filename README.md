@@ -42,7 +42,6 @@ logger.py / reports.py    Runtime logs and generated reports
 
 Beabots.spec              PyInstaller definition for server.exe
 package.json              Electron dependencies and electron-builder config
-BeaconInstaller.iss       Optional Inno Setup installer definition
 templates/                CF2 Excel templates bundled with the Python service
 ```
 
@@ -59,7 +58,6 @@ Install the following on the development/build computer:
 3. **Node.js 22 or 24 LTS**, including npm
 4. **64-bit Python 3.12 or newer**, including `pip` and the Python launcher
 5. **Microsoft Visual C++ Redistributable 2015–2022 (x64)**
-6. **Inno Setup 6** only if building the custom `BeaconInstaller.iss` installer
 
 Internet access is required for npm packages, Python packages, license validation, update checks, and Beacon/EClaims endpoints.
 
@@ -141,10 +139,7 @@ In the application, provide:
 
 ## Rebuild the application
 
-There are two packaged outputs:
-
-- `npm run dist` produces electron-builder output, including an NSIS installer.
-- `BeaconInstaller.iss` produces the project's separate Inno Setup installer from `release\win-unpacked`.
+The release is packaged by electron-builder using its NSIS installer target.
 
 ### 1. Keep versions synchronized
 
@@ -152,15 +147,12 @@ Before a release, update the same version in:
 
 - `package.json` → `version`
 - `package-lock.json` → root package version, normally updated by npm
-- `BeaconInstaller.iss` → `MyAppVersion`
 
 To update the npm version without creating a Git tag:
 
 ```powershell
 npm.cmd version 4.0.2 --no-git-tag-version
 ```
-
-Then update `MyAppVersion` in `BeaconInstaller.iss` to the same value.
 
 ### 2. Build the Python service
 
@@ -200,22 +192,6 @@ Verify that the packaged Python service exists:
 ```powershell
 Test-Path .\release\win-unpacked\resources\server\server.exe
 ```
-
-### 4. Build the optional Inno Setup installer
-
-Open `BeaconInstaller.iss` in Inno Setup and select **Build → Compile**, or run the compiler from PowerShell:
-
-```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ".\BeaconInstaller.iss"
-```
-
-Expected output:
-
-```text
-Output\Beabots_Setup_v<version>.exe
-```
-
-This installer packages `release\win-unpacked`; run `npm.cmd run dist` first.
 
 ## Release verification checklist
 
@@ -277,7 +253,6 @@ These directories are build/runtime output and can be regenerated:
 build\
 python-build\
 release\
-Output\
 node_modules\
 venv\
 __pycache__\
