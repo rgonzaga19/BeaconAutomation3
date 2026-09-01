@@ -9,6 +9,8 @@
 #define MyAppExeName "Beabots.exe"
 
 [Setup]
+; Never change this AppId. Inno Setup uses it to recognize and upgrade every
+; previous Beabots installation instead of creating a second uninstall entry.
 AppId={{D2A91D2F-0B2F-4B8E-9B79-4B2B5A8D7F01}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -19,6 +21,8 @@ AppUpdatesURL={#MyAppURL}
 
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
+UsePreviousAppDir=yes
+PrivilegesRequired=admin
 
 DisableProgramGroupPage=yes
 
@@ -31,7 +35,10 @@ WizardStyle=modern
 
 SetupIconFile=bot.ico
 
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+CloseApplications=yes
+RestartApplications=no
 
 UninstallDisplayIcon={app}\{#MyAppExeName}
 

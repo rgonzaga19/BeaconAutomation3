@@ -139,14 +139,17 @@ In the application, provide:
 
 ## Rebuild the application
 
-The release is packaged by electron-builder using its NSIS installer target.
+Electron-builder assembles the unpacked Electron application, and Inno Setup
+creates the installer distributed to users. Continue using Inno Setup for every
+release so its permanent `AppId` upgrades existing installations in place.
 
 ### 1. Keep versions synchronized
 
 Before a release, update the same version in:
 
-- `package.json` → `version`
-- `package-lock.json` → root package version, normally updated by npm
+- `package.json` -> `version`
+- `package-lock.json` -> root package version, normally updated by npm
+- `BeaconInstaller.iss` -> `MyAppVersion`
 
 To update the npm version without creating a Git tag:
 
@@ -163,7 +166,7 @@ python -m pip install -r requirements.txt
 npm.cmd ci
 ```
 
-### 3. Build the release
+### 3. Build the application
 
 ```powershell
 npm.cmd run dist
@@ -182,13 +185,18 @@ python-build\server\_internal\templates\
 `Beabots.spec` bundles both CF2 templates and certifi's TLS CA bundle
 automatically.
 
-electron-builder reads `package.json` and creates output under `release\`, normally including:
+electron-builder reads `package.json` and creates output under `release\`,
+including the application tree consumed by Inno Setup:
 
 ```text
 release\win-unpacked\
 release\Beabots Setup <version>.exe
 release\latest.yml
 ```
+
+The Electron-builder NSIS executable (`release\Beabots Setup <version>.exe`)
+is an intermediate build artifact. Do not publish it: it has a different
+installer identity and cannot upgrade installations created by Inno Setup.
 
 Verify that the packaged Python service exists:
 
@@ -197,11 +205,38 @@ Test-Path .\release\win-unpacked\resources\server\server.exe
 Test-Path .\release\win-unpacked\resources\server\_internal\certifi\cacert.pem
 ```
 
+### 4. Build the Inno Setup installer
+
+Compile the checked-in installer script after `npm.cmd run dist` finishes:
+
+```powershell
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" .\BeaconInstaller.iss
+```
+
+Expected distributable output:
+
+```text
+Output\Beabots_Setup_v<version>.exe
+```
+
+Only distribute this `Output` installer. Keep the following line in
+`BeaconInstaller.iss` unchanged across all versions:
+
+```ini
+AppId={{D2A91D2F-0B2F-4B8E-9B79-4B2B5A8D7F01}}
+```
+
+Running a newer Inno installer over an older Beabots installation will reuse
+the prior installation directory and update the existing Windows uninstall
+entry. Users do not need to uninstall the old version first.
+
 ## Release verification checklist
 
 Test on a clean Windows user profile or virtual machine:
 
 - Installer completes and launches `Beabots.exe`.
+- Installing over the previous release upgrades it without creating a second
+  Beabots entry under Windows Installed Apps.
 - `resources\server\server.exe` starts without a visible console window.
 - Login and license validation work.
 - S2/S4 selection is retained after restarting.
@@ -257,6 +292,7 @@ These directories are build/runtime output and can be regenerated:
 build\
 python-build\
 release\
+Output\
 node_modules\
 venv\
 __pycache__\
