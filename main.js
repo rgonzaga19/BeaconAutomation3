@@ -971,6 +971,41 @@ function cleanupOldInstallers(keepFilePath) {
   }
 }
 
+// Start a detached helper that waits for this Electron process to disappear
+// before opening the installer. Launching the installer directly here races
+// with app.quit(): on a fast machine the installer can begin while Beabots is
+// still closing windows or holding files in its installation directory.
+function launchInstallerAfterAppExit(installerPath) {
+  const waitAndLaunch = [
+    "$parentId = [int]$env:BEABOTS_UPDATE_PARENT_PID",
+    "$installer = $env:BEABOTS_UPDATE_INSTALLER",
+    "Wait-Process -Id $parentId -ErrorAction SilentlyContinue",
+    "Start-Process -FilePath $installer",
+  ].join("; ");
+
+  const helper = spawn(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-WindowStyle", "Hidden",
+      "-Command", waitAndLaunch,
+    ],
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        BEABOTS_UPDATE_PARENT_PID: String(process.pid),
+        BEABOTS_UPDATE_INSTALLER: installerPath,
+      },
+    }
+  );
+
+  helper.unref();
+}
+
 // Checks whether a complete installer for this exact update is already
 // sitting on disk from a previous session. Verifies completeness against
 // the remote Content-Length rather than trusting a possibly partial or
@@ -1168,17 +1203,21 @@ ipcMain.handle("app:installUpdate", async () => {
   forcedUpdateActive = false;
   quittingForUpdate = true;
 
+  // Mandatory-update windows are created with setClosable(false). Restore
+  // closability so app.quit() can close the window at the OS level.
+  const aboutWindow = windows.about;
+  if (aboutWindow && !aboutWindow.isDestroyed()) {
+    aboutWindow.setClosable(true);
+  }
+
   // Stop the backend server before replacing the installation
   stopServer();
 
-  // Launch the installer
-  spawn(downloadedInstaller, [], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: false
-  }).unref();
+  // The helper starts now but does not launch the installer until this
+  // Electron process has completely exited.
+  launchInstallerAfterAppExit(downloadedInstaller);
 
-  // Quit Electron
+  // Close every Beabots window and finish shutting down the application.
   app.quit();
 
   return true;
