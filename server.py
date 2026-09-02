@@ -351,6 +351,7 @@ def _analyze_workbook(workbook, claim_year, claim_month=None, mode="new_draft"):
             accreditation_no=str(accreditation),
             treatment_dates_raw=str(treatment_dates),
             member_pin=identifier_str if mode == "new_draft" else "",
+            source_row=row,
         )
 
         record.treatment_dates = parse_dates(
@@ -375,6 +376,7 @@ def _record_to_dict(record, cf2, mode="new_draft"):
     return {
         "identifier_label": "Transmittal No." if mode == "existing_draft" else "Member PIN",
         "identifier": record.transmittal if mode == "existing_draft" else record.member_pin,
+        "excel_row": record.source_row,
         "patient_name": record.patient_name,
         "doctor": record.doctor,
         "accreditation_no": record.accreditation_no,
@@ -466,20 +468,67 @@ def _run_cf2_automation():
     global _cf2_running
     automation = None
     try:
+        records = _state["patient_records"]
+        total = len(records)
+        mode = _state["cf2_mode"]
+
+        def emit_progress(record, current, status, phase="", message="", result=None):
+            identifier_label = "Transmittal No." if mode == "existing_draft" else "Member PIN"
+            identifier = record.transmittal if mode == "existing_draft" else record.member_pin
+            socketio.emit("cf2_progress", {
+                "mode": mode,
+                "current": current,
+                "total": total,
+                "excel_row": getattr(record, "source_row", 0),
+                "identifier_label": identifier_label,
+                "identifier": identifier,
+                "patient_name": getattr(record, "patient_name", ""),
+                "status": status,
+                "phase": phase,
+                "message": message,
+                "result": result,
+            })
+
         automation = CF2Automation(
             uploaded_excel_path=_state["selected_file"],
-            mode=_state["cf2_mode"],
+            mode=mode,
+            progress_callback=lambda phase, message="": emit_progress(
+                automation._progress_record,
+                automation._progress_current,
+                "running",
+                phase,
+                message,
+            ) if automation and automation._progress_record is not None else None,
         )
-        for record in _state["patient_records"]:
+        for current, record in enumerate(records, start=1):
             try:
-                automation.process_patient(record)
+                emit_progress(record, current, "running", "Starting", "Preparing patient row.")
+                result = automation.process_patient(record, current=current, total=total)
+                final_status = result.get("status", "failed")
+                emit_progress(
+                    record,
+                    current,
+                    final_status,
+                    "Completed" if final_status == "success" else result.get("message", ""),
+                    result.get("message", ""),
+                    result=result,
+                )
             except Exception as ex:
-                automation.results.append({
+                failed_result = {
                     "transmittal": getattr(record, "transmittal", "?"),
                     "patient_name": getattr(record, "patient_name", "?"),
                     "status": "failed",
                     "message": f"Unhandled error: {ex}",
-                })
+                }
+                automation.results.append(failed_result)
+                emit_progress(
+                    record,
+                    current,
+                    "failed",
+                    "Failed",
+                    failed_result["message"],
+                    result=failed_result,
+                )
     except Exception as ex:
         socketio.emit("log", {"message": f"ERROR: {ex}", "level": "ERROR"})
     finally:

@@ -102,6 +102,8 @@ let cf2RunActive = false;
 let cf2LogStopTimer = null;
 let lastDetailLine = "";
 let lastDetailAt = 0;
+let batchRecords = [];
+let batchStatuses = new Map();
 
 function log(text, level = "INFO", target = summaryLogBox) {
   const line = document.createElement("div");
@@ -113,6 +115,8 @@ function log(text, level = "INFO", target = summaryLogBox) {
 function clearLog() {
   summaryLogBox.innerHTML = "";
   detailsLogBox.innerHTML = "";
+  batchRecords = [];
+  batchStatuses = new Map();
 }
 
 function scrollLogToEnd() {
@@ -129,6 +133,150 @@ function detailLog(text, level = "INFO") {
   lastDetailAt = now;
   log(text, level, detailsLogBox);
   detailsLogBox.scrollTop = detailsLogBox.scrollHeight;
+}
+
+function statusLabel(status) {
+  return {
+    waiting: "Waiting",
+    running: "Running",
+    success: "Success",
+    skipped: "Skipped",
+    failed: "Failed",
+  }[status] || "Waiting";
+}
+
+function currentBatchCounts() {
+  const counts = { success: 0, skipped: 0, failed: 0 };
+  batchStatuses.forEach((item) => {
+    if (counts[item.status] !== undefined) counts[item.status] += 1;
+  });
+  return counts;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function updateBatchHeader(progress = null) {
+  const card = document.getElementById("batchStatusCard");
+  const title = document.getElementById("batchStatusTitle");
+  const subtitle = document.getElementById("batchStatusSubtitle");
+  const count = document.getElementById("batchCountPill");
+  if (!card || !title || !subtitle || !count) return;
+
+  const total = batchRecords.length;
+  const counts = currentBatchCounts();
+  count.textContent = `${counts.success + counts.skipped + counts.failed}/${total} done`;
+
+  if (!total) {
+    card.classList.remove("running");
+    title.textContent = "No workbook loaded";
+    subtitle.textContent = "Upload an Excel file to preview the CF2 batch.";
+    return;
+  }
+
+  if (progress && progress.status === "running") {
+    card.classList.add("running");
+    title.textContent = `Running ${progress.current || "-"} of ${progress.total || total}`;
+    subtitle.textContent = `${progress.patient_name || "Current patient"} - ${progress.phase || "Processing"}`;
+    return;
+  }
+
+  card.classList.remove("running");
+  title.textContent = "Workbook ready";
+  subtitle.textContent = `${total} patient${total === 1 ? "" : "s"} loaded. Start automation when ready.`;
+}
+
+function renderBatchTable(records) {
+  batchRecords = records || [];
+  batchStatuses = new Map(batchRecords.map((record) => [
+    String(record.excel_row),
+    { status: "waiting", phase: "" },
+  ]));
+
+  if (!batchRecords.length) {
+    summaryLogBox.innerHTML = `<div class="batch-empty">Upload an Excel workbook to show the live CF2 batch table.</div>`;
+    return;
+  }
+
+  const identifierHeader = escapeHtml(batchRecords[0].identifier_label || (currentMode === "existing_draft" ? "Transmittal No." : "Member PIN"));
+  summaryLogBox.innerHTML = `
+    <div class="batch-board">
+      <div class="batch-status-card" id="batchStatusCard">
+        <span class="batch-status-orb"></span>
+        <div>
+          <div class="batch-status-title" id="batchStatusTitle">Workbook ready</div>
+          <div class="batch-status-subtitle" id="batchStatusSubtitle"></div>
+        </div>
+        <div class="batch-count-pill" id="batchCountPill">0/${batchRecords.length} done</div>
+      </div>
+      <div class="batch-table-wrap">
+        <table class="batch-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>${identifierHeader}</th>
+              <th>Patient Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${batchRecords.map((record) => `
+              <tr class="batch-row waiting" data-excel-row="${record.excel_row}">
+                <td>
+                  <span class="row-status"><span class="row-status-dot"></span><span class="row-status-text">Waiting</span></span>
+                  <span class="batch-phase"></span>
+                </td>
+                <td title="${escapeHtml(record.identifier || "")}">${escapeHtml(record.identifier || "-")}</td>
+                <td title="${escapeHtml(record.patient_name || "")}">${escapeHtml(record.patient_name || "-")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+  updateBatchHeader();
+}
+
+function updateBatchRow(progress) {
+  if (!progress || !progress.excel_row) return;
+  const rowKey = String(progress.excel_row);
+  const status = progress.status || "waiting";
+  batchStatuses.set(rowKey, { status, phase: progress.phase || "" });
+
+  document.querySelectorAll(".batch-row.running").forEach((row) => {
+    if (row.dataset.excelRow !== rowKey) row.classList.remove("running");
+  });
+
+  const row = summaryLogBox.querySelector(`.batch-row[data-excel-row="${rowKey}"]`);
+  if (!row) return;
+
+  row.className = `batch-row ${status}`;
+  const statusText = row.querySelector(".row-status-text");
+  const phaseText = row.querySelector(".batch-phase");
+  if (statusText) statusText.textContent = statusLabel(status);
+  if (phaseText) phaseText.textContent = progress.phase || progress.message || "";
+  row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  updateBatchHeader(progress);
+}
+
+function resetBatchRowsForRun() {
+  batchStatuses = new Map(batchRecords.map((record) => [
+    String(record.excel_row),
+    { status: "waiting", phase: "" },
+  ]));
+  summaryLogBox.querySelectorAll(".batch-row").forEach((row) => {
+    row.className = "batch-row waiting";
+    const statusText = row.querySelector(".row-status-text");
+    const phaseText = row.querySelector(".batch-phase");
+    if (statusText) statusText.textContent = "Waiting";
+    if (phaseText) phaseText.textContent = "";
+  });
+  updateBatchHeader();
 }
 
 document.querySelectorAll(".log-tab").forEach((tab) => {
@@ -243,6 +391,7 @@ uploadBtn.addEventListener("click", async () => {
   log("=========================================");
   log(`Patients Found : ${result.patient_count}`);
   log("=========================================");
+  renderBatchTable(result.records);
   scrollLogToEnd();
 
   sheetsLine.textContent = `Sheets : ${result.sheets.length} (${result.sheets.join(", ")})`;
@@ -396,8 +545,13 @@ startBtn.addEventListener("click", async () => {
   detailsLogBox.innerHTML = "";
   lastDetailLine = "";
   lastDetailAt = 0;
-  log("");
-  log("Automation started. Open Step-by-Step Log to follow each action.");
+  resetBatchRowsForRun();
+  updateBatchHeader({
+    status: "running",
+    current: 0,
+    total: batchRecords.length,
+    phase: "Starting automation",
+  });
   summaryLogBox.scrollTop = summaryLogBox.scrollHeight;
   setControlsRunning(true);
 
@@ -422,6 +576,11 @@ socket.on("log", (data) => {
   detailLog(data.message, data.level || "INFO");
 });
 
+socket.on("cf2_progress", (data) => {
+  if (!cf2RunActive) return;
+  updateBatchRow(data);
+});
+
 socket.on("cf2_done", (data) => {
   const results = data.results || [];
 
@@ -429,6 +588,17 @@ socket.on("cf2_done", (data) => {
     const success = results.filter((r) => r.status === "success");
     const skipped = results.filter((r) => r.status === "skipped");
     const failed = results.filter((r) => r.status === "failed");
+
+    results.forEach((result, index) => {
+      const record = batchRecords[index];
+      if (!record) return;
+      updateBatchRow({
+        excel_row: record.excel_row,
+        status: result.status,
+        phase: result.status === "success" ? "Completed" : result.message,
+      });
+    });
+    updateBatchHeader();
 
     log("");
     log("=========================================");

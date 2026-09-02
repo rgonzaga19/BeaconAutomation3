@@ -106,7 +106,7 @@
   }
 
   /* Flat panels: a single-weight border does the separating, no shadow. */
-  .section-block { padding: 4px var(--gap-2) var(--gap-2) var(--gap-2); border-radius: var(--radius-lg); box-shadow: none; }
+  .section-block { padding: 4px 14px 12px 14px; border-radius: var(--radius-lg); box-shadow: none; }
 
   /* Claim Period and Workbook panels keep their natural (compact)
      height; the Reminder panel below absorbs whatever vertical space
@@ -189,15 +189,15 @@
   .mode-hint {
     color: var(--text-sec);
     font-size: 10.5px;
-    line-height: 1.5;
-    padding: 10px 6px 4px 6px;
+    line-height: 1.35;
+    padding: 6px 6px 1px 6px;
   }
 
   /* ---------- Workbook: upload + guide ---------- */
   .workbook-row {
     display: flex;
-    gap: var(--gap-2);
-    padding: 10px 4px 4px 4px;
+    gap: 8px;
+    padding: 6px 4px 2px 4px;
     align-items: stretch;
   }
 
@@ -206,11 +206,11 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 10px;
-    padding: 4px 4px;
+    gap: 7px;
+    padding: 2px 4px;
   }
 
-  #uploadBtn { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; }
+  #uploadBtn { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding-top: 9px; padding-bottom: 9px; }
 
   .file-status {
     display: flex;
@@ -219,7 +219,7 @@
     color: var(--text-sec);
     font-family: var(--font-mono);
     font-size: 12px;
-    padding: 9px 12px;
+    padding: 7px 10px;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -254,10 +254,10 @@
     border-radius: var(--radius-md);
     cursor: pointer;
     text-align: left;
-    padding: 16px 16px 14px 16px;
+    padding: 11px 13px 10px 13px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 5px;
     transition: border-color 0.15s ease, background-color 0.15s ease;
   }
   .guide-card:hover {
@@ -277,7 +277,7 @@
   .guide-card .guide-desc {
     color: var(--text-sec);
     font-size: 10.5px;
-    line-height: 1.5;
+    line-height: 1.35;
   }
   .guide-card .guide-open-btn {
     margin-top: auto;
@@ -293,9 +293,9 @@
   /* ---------- Workbook summary readout ---------- */
   .stat-row {
     display: flex;
-    gap: 12px;
-    padding: 4px 4px 0 4px;
-    margin-top: 12px;
+    gap: 10px;
+    padding: 2px 4px 0 4px;
+    margin-top: 6px;
   }
   .stat-card {
     flex: 1;
@@ -305,14 +305,14 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    padding: 10px 14px;
+    padding: 7px 11px;
     color: var(--text-pri);
     font-family: var(--font-mono);
-    font-size: 12.5px;
+    font-size: 12px;
   }
   .stat-card .stat-icon {
-    width: 26px;
-    height: 26px;
+    width: 22px;
+    height: 22px;
     flex: none;
     display: flex;
     align-items: center;
@@ -377,6 +377,155 @@
      from cf2_automation.py actually stands out in the log instead of
      blending into the plain INFO stream. */
   .log-line.ERROR { color: var(--error, #ff6b6b); }
+  .batch-board {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    font-family: var(--font-ui);
+    line-height: 1.3;
+    white-space: normal;
+  }
+  .batch-status-card {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
+    align-items: center;
+    min-height: 44px;
+    padding: 7px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .batch-status-orb {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--text-sec);
+  }
+  .batch-status-card.running .batch-status-orb {
+    background: var(--accent);
+    animation: cf2-current-pulse 0.9s ease-in-out infinite;
+  }
+  .batch-status-title {
+    color: var(--text-pri);
+    font: 800 11px var(--font-ui);
+    letter-spacing: 0.3px;
+  }
+  .batch-status-subtitle {
+    margin-top: 1px;
+    color: var(--text-sec);
+    font-size: 10px;
+    line-height: 1.25;
+  }
+  .batch-count-pill {
+    padding: 4px 8px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 999px;
+    font: 800 10px var(--font-ui);
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .batch-table-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    white-space: normal;
+  }
+  .batch-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-family: var(--font-ui);
+  }
+  .batch-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 7px 10px;
+    color: var(--text-sec);
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    text-align: left;
+  }
+  .batch-table th:first-child { width: 112px; }
+  .batch-table th:nth-child(2) { width: 34%; }
+  .batch-table td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-pri);
+    font-size: 11.5px;
+    line-height: 1.35;
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .batch-table tbody tr:last-child td { border-bottom: 0; }
+  .batch-table tbody tr {
+    position: relative;
+    transition: background-color 0.15s ease;
+  }
+  .batch-table tbody tr:hover { background: var(--accent-soft); }
+  .batch-row.running {
+    background: var(--accent-soft);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+  }
+  .batch-row.running td:first-child { color: var(--accent); }
+  .batch-row.success td:first-child { color: var(--success, #4ade80); }
+  .batch-row.skipped td:first-child { color: var(--warning, #fbbf24); }
+  .batch-row.failed td:first-child { color: var(--error, #ff6b6b); }
+  .row-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 86px;
+    font-weight: 800;
+  }
+  .row-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.55;
+  }
+  .batch-row.running .row-status-dot {
+    opacity: 1;
+    animation: cf2-current-pulse 0.9s ease-in-out infinite;
+  }
+  .batch-phase {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-sec);
+    font-size: 10px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .batch-empty {
+    height: 100%;
+    display: grid;
+    place-items: center;
+    color: var(--text-sec);
+    font-size: 11.5px;
+    text-align: center;
+    padding: 18px;
+  }
+  @keyframes cf2-current-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.12); }
+  }
   #startBtn {
     width: 100%;
     margin-top: 4px;

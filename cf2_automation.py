@@ -96,7 +96,7 @@ class TransmittalNotFoundError(Exception):
 
 class CF2Automation:
 
-    def __init__(self, uploaded_excel_path=None, mode="new_draft"):
+    def __init__(self, uploaded_excel_path=None, mode="new_draft", progress_callback=None):
         # Path to the workbook the user actually uploaded. Sheet2 (Billing
         # Clerk / Accountant name, contact no., official capacity) must be
         # read from THIS file, not from the bundled CF2_TEMPLATE_PATH.
@@ -112,6 +112,10 @@ class CF2Automation:
         # Every processed patient gets one entry here:
         # {"transmittal": ..., "patient_name": ..., "status": "success"/"skipped"/"failed", "message": ...}
         self.results = []
+        self.progress_callback = progress_callback
+        self._progress_record = None
+        self._progress_current = 0
+        self._progress_total = 0
         # API-resolved IDs for the patient currently being processed.
         # Both new-draft and existing-draft modes set these directly from API
         # responses; no browser/page URL is involved.
@@ -120,7 +124,10 @@ class CF2Automation:
     # ------------------------------------------------------------------
     # Public entry point — never lets a single patient crash the batch
     # ------------------------------------------------------------------
-    def process_patient(self, record):
+    def process_patient(self, record, current=0, total=0):
+        self._progress_record = record
+        self._progress_current = current
+        self._progress_total = total
         result = {
             "transmittal": getattr(record, "transmittal", "?"),
             "patient_name": getattr(record, "patient_name", "?"),
@@ -134,6 +141,9 @@ class CF2Automation:
             result["message"] = f"Could not build CF2 data: {e}"
             print(f"ERROR: {result['message']}")
             self.results.append(result)
+            self._progress_record = None
+            self._progress_current = 0
+            self._progress_total = 0
             return result
 
         result["transmittal"] = data.transmittal
@@ -165,6 +175,9 @@ class CF2Automation:
             print(f"ERROR: Unhandled exception for {data.patient_name}: {e}")
 
         self.results.append(result)
+        self._progress_record = None
+        self._progress_current = 0
+        self._progress_total = 0
         return result
 
     def get_summary(self):
@@ -233,6 +246,7 @@ class CF2Automation:
           the rest of the CF2 form can still be attempted.
         """
         try:
+            self._progress(description)
             print(description)
             func()
             return True
@@ -241,6 +255,14 @@ class CF2Automation:
             if critical:
                 raise
             return False
+
+    def _progress(self, phase, message=""):
+        if not self.progress_callback:
+            return
+        try:
+            self.progress_callback(phase, message)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Main flow
@@ -251,6 +273,7 @@ class CF2Automation:
         if self.mode == "existing_draft":
             self._locate_existing_draft(data)
         else:
+            self._progress("Creating new draft via API...")
             self._create_draft(data)
 
         self._step(
@@ -259,10 +282,14 @@ class CF2Automation:
             critical=False,
         )
 
+        self._progress("Adding discharge diagnosis via API...")
         self._add_discharge_diagnosis()
+        self._progress("Adding surgical procedure via API...")
         self._add_surgical_procedure(data)
+        self._progress("Adding doctor via API...")
         self._add_doctor(data)
 
+        self._progress("Saving CF2 fields and session dates via API...")
         if not self._fill_and_save_cf2(data, persist_session_dates=True):
             raise RuntimeError(
                 "Could not persist CF2/session dates through EditPHICCF2 API."
@@ -277,10 +304,13 @@ class CF2Automation:
 
         # Keep the second save from the proven flow. It writes the final CF2
         # values after case-rate tagging without changing the established logic.
+        self._progress("Saving final CF2 fields via API...")
         if not self._fill_and_save_cf2(data):
             raise RuntimeError("Could not save CF2 through EditPHICCF2 API.")
 
+        self._progress("Verifying session dates via API...")
         self._diagnose_session_date_backend(data, "AFTER CF2 SAVE")
+        self._progress("Saving Statement of Account and CF2 preview via API...")
         self._fill_statement_of_account(data)
 
         print("SUCCESS: CF2 completed for this patient.")

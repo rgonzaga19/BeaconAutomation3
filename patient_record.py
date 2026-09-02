@@ -24,3 +24,5 @@ class PatientRecord:
     last_treatment: date | None = None
 
     total_sessions: int = 0
+
+    source_row: int = 0
