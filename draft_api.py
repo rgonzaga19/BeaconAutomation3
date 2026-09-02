@@ -18,7 +18,7 @@ class InvalidMemberPinError(Exception):
     pass
 
 def _base_url():
-    return "https://beacon-s4.bizbox.ph"
+    return browser_session._get_beacon_url().rstrip("/")
 
 def _headers():
     token = browser_session.get_auth_token()

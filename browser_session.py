@@ -5,6 +5,7 @@ but Beabots no longer creates or manages a browser session. Authentication is
 performed directly against Beacon's OAuth2 token endpoint.
 """
 
+import sys
 import time
 
 import requests
@@ -61,6 +62,17 @@ def invalidate_auth_token():
     """Discard cached authentication after credentials or server change."""
     global _auth_token
     _auth_token = None
+    for module_name, cache_names in {
+        "cf2_api": ("_client_id_cache",),
+        "beacon_api": ("_client_id_cache",),
+        "soa_api": ("_client_ids_cache", "_client_ids_cache_user_id"),
+    }.items():
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        for cache_name in cache_names:
+            if hasattr(module, cache_name):
+                setattr(module, cache_name, None)
 
 
 def _ensure_auth_token(username=None, password=None):
