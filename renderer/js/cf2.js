@@ -167,11 +167,19 @@ function updateBatchHeader(progress = null) {
   const title = document.getElementById("batchStatusTitle");
   const subtitle = document.getElementById("batchStatusSubtitle");
   const count = document.getElementById("batchCountPill");
+  const totalValue = document.getElementById("cf2TotalValue");
+  const successValue = document.getElementById("cf2SuccessValue");
+  const warningValue = document.getElementById("cf2WarningValue");
+  const errorValue = document.getElementById("cf2ErrorValue");
   if (!card || !title || !subtitle || !count) return;
 
   const total = batchRecords.length;
   const counts = currentBatchCounts();
   count.textContent = `${counts.success + counts.skipped + counts.failed}/${total} done`;
+  if (totalValue) totalValue.textContent = total;
+  if (successValue) successValue.textContent = counts.success;
+  if (warningValue) warningValue.textContent = counts.skipped;
+  if (errorValue) errorValue.textContent = counts.failed;
 
   if (!total) {
     card.classList.remove("running");
@@ -205,6 +213,7 @@ function renderBatchTable(records) {
   }
 
   const identifierHeader = escapeHtml(batchRecords[0].identifier_label || (currentMode === "existing_draft" ? "Transmittal No." : "Member PIN"));
+  const showGeneratedTransmittal = currentMode === "new_draft";
   summaryLogBox.innerHTML = `
     <div class="batch-board">
       <div class="batch-status-card" id="batchStatusCard">
@@ -215,12 +224,31 @@ function renderBatchTable(records) {
         </div>
         <div class="batch-count-pill" id="batchCountPill">0/${batchRecords.length} done</div>
       </div>
+      <div class="cf2-summary-strip">
+        <div class="cf2-summary-stat">
+          <div class="label">Total</div>
+          <div class="value" id="cf2TotalValue">${batchRecords.length}</div>
+        </div>
+        <div class="cf2-summary-stat success">
+          <div class="label">Success</div>
+          <div class="value" id="cf2SuccessValue">0</div>
+        </div>
+        <div class="cf2-summary-stat warning">
+          <div class="label">Warnings</div>
+          <div class="value" id="cf2WarningValue">0</div>
+        </div>
+        <div class="cf2-summary-stat error">
+          <div class="label">Errors</div>
+          <div class="value" id="cf2ErrorValue">0</div>
+        </div>
+      </div>
       <div class="batch-table-wrap">
         <table class="batch-table">
           <thead>
             <tr>
               <th>Status</th>
               <th>${identifierHeader}</th>
+              ${showGeneratedTransmittal ? "<th>Transmittal No.</th>" : ""}
               <th>Patient Name</th>
             </tr>
           </thead>
@@ -232,6 +260,7 @@ function renderBatchTable(records) {
                   <span class="batch-phase"></span>
                 </td>
                 <td title="${escapeHtml(record.identifier || "")}">${escapeHtml(record.identifier || "-")}</td>
+                ${showGeneratedTransmittal ? `<td class="generated-transmittal" title=""></td>` : ""}
                 <td title="${escapeHtml(record.patient_name || "")}">${escapeHtml(record.patient_name || "-")}</td>
               </tr>
             `).join("")}
@@ -258,8 +287,13 @@ function updateBatchRow(progress) {
   row.className = `batch-row ${status}`;
   const statusText = row.querySelector(".row-status-text");
   const phaseText = row.querySelector(".batch-phase");
+  const generatedTransmittalCell = row.querySelector(".generated-transmittal");
   if (statusText) statusText.textContent = statusLabel(status);
   if (phaseText) phaseText.textContent = progress.phase || progress.message || "";
+  if (generatedTransmittalCell && progress.transmittal) {
+    generatedTransmittalCell.textContent = progress.transmittal;
+    generatedTransmittalCell.title = progress.transmittal;
+  }
   row.scrollIntoView({ block: "nearest", behavior: "smooth" });
   updateBatchHeader(progress);
 }
@@ -585,10 +619,6 @@ socket.on("cf2_done", (data) => {
   const results = data.results || [];
 
   if (results.length > 0) {
-    const success = results.filter((r) => r.status === "success");
-    const skipped = results.filter((r) => r.status === "skipped");
-    const failed = results.filter((r) => r.status === "failed");
-
     results.forEach((result, index) => {
       const record = batchRecords[index];
       if (!record) return;
@@ -596,28 +626,11 @@ socket.on("cf2_done", (data) => {
         excel_row: record.excel_row,
         status: result.status,
         phase: result.status === "success" ? "Completed" : result.message,
+        transmittal: result.transmittal,
       });
     });
     updateBatchHeader();
 
-    log("");
-    log("=========================================");
-    log(" AUTOMATION SUMMARY");
-    log("=========================================");
-    log(`Total     : ${results.length}`);
-    log(`Success   : ${success.length}`);
-    log(`Skipped   : ${skipped.length}`);
-    log(`Failed    : ${failed.length}`);
-    log("-----------------------------------------");
-
-    results.forEach((r) => {
-      log(`[${r.status.toUpperCase()}] Transmittal: ${r.transmittal}  |  Patient: ${r.patient_name}`);
-      if (r.status !== "success" && r.message) {
-        log(`        Reason: ${r.message}`);
-      }
-    });
-
-    log("=========================================");
     summaryLogBox.scrollTop = summaryLogBox.scrollHeight;
   }
 

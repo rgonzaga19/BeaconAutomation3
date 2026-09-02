@@ -209,7 +209,155 @@
   }
   @keyframes soa-progress-border { to { --soa-progress-angle: 360deg; } }
 
-  #logBox { flex: 1; margin: 10px 0 0 0; min-height: 0; }
+  .soa-log-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    margin: 10px 0 0 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .soa-log-tab {
+    flex: 1;
+    padding: 8px 10px;
+    color: var(--text-sec);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    font: 700 10.5px var(--font-ui);
+    cursor: pointer;
+  }
+  .soa-log-tab.active {
+    color: var(--bg-dark);
+    background: var(--accent);
+  }
+  .soa-log-panel {
+    flex: 1;
+    min-height: 0;
+    margin: 8px 0 0 0;
+    display: none;
+  }
+  .soa-log-panel.active { display: block; }
+  #summaryLogPanel { white-space: normal; }
+  #automationLogPanel { white-space: pre-wrap; }
+  .soa-summary {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    white-space: normal;
+    font-family: var(--font-ui);
+    line-height: 1.35;
+  }
+  .soa-summary-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .soa-summary-stat {
+    padding: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .soa-summary-stat .label {
+    color: var(--text-sec);
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+  }
+  .soa-summary-stat .value {
+    margin-top: 4px;
+    color: var(--text-pri);
+    font-size: 18px;
+    font-weight: 900;
+  }
+  .soa-summary-stat.success .value { color: var(--success); }
+  .soa-summary-stat.warning .value { color: var(--warning); }
+  .soa-summary-stat.error .value { color: var(--error); }
+  .soa-summary-status {
+    padding: 10px 12px;
+    color: var(--text-sec);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-md);
+    font-size: 11px;
+  }
+  .soa-status-table-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .soa-status-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+  .soa-status-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 7px 10px;
+    color: var(--text-sec);
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+    text-align: left;
+  }
+  .soa-status-table th:first-child { width: 120px; }
+  .soa-status-table td {
+    padding: 9px 11px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-pri);
+    font-size: 11.5px;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .soa-status-table tbody tr:last-child td { border-bottom: 0; }
+  .soa-status-row.running {
+    background: var(--accent-soft);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+  }
+  .soa-status-row.running td:first-child { color: var(--accent); }
+  .soa-status-row.success td:first-child { color: var(--success); }
+  .soa-status-row.skipped td:first-child { color: var(--warning); }
+  .soa-status-row.failed td:first-child { color: var(--error); }
+  .soa-row-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 900;
+  }
+  .soa-row-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: .55;
+  }
+  .soa-status-row.running .soa-row-dot {
+    opacity: 1;
+    animation: soa-row-pulse .9s ease-in-out infinite;
+  }
+  @keyframes soa-row-pulse {
+    0%, 100% { opacity: .35; transform: scale(.85); }
+    50% { opacity: 1; transform: scale(1.12); }
+  }
+  @media (max-width: 1100px) {
+    .soa-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   @media (max-width: 900px) {
     .body { flex-direction:column; overflow-y:auto; }
     .body .col:first-child, .body .col:last-child { flex:none; min-height:320px; }
@@ -288,7 +436,12 @@
 
       <div class="col">
         <div class="section-label"><span>▸ AUTOMATION LOGS</span></div>
-        <div class="log-box" id="logBox"></div>
+        <div class="soa-log-tabs" role="tablist" aria-label="SOA automation logs">
+          <button class="soa-log-tab active" data-log-panel="summaryLogPanel" role="tab" aria-selected="true">Summary Report</button>
+          <button class="soa-log-tab" data-log-panel="automationLogPanel" role="tab" aria-selected="false">Automation Log</button>
+        </div>
+        <div class="log-box soa-log-panel active" id="summaryLogPanel" role="tabpanel"></div>
+        <div class="log-box soa-log-panel" id="automationLogPanel" role="tabpanel"></div>
       </div>
     </div>
   </div>

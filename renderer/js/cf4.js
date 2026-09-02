@@ -524,6 +524,8 @@ tabBtns.forEach((btn) => {
 // ---------------------------------------------------------------------------
 const transmittalsInput = document.getElementById("transmittalsInput");
 const countLabel = document.getElementById("countLabel");
+let cf4Rows = [];
+let cf4Running = false;
 
 function updateCount() {
   const lines = transmittalsInput.value.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -536,6 +538,19 @@ transmittalsInput.addEventListener("keyup", updateCount);
 // AUTOMATION: Log box (same colour-tag detection as ui.py's write_log)
 // ---------------------------------------------------------------------------
 const logBox = document.getElementById("logBox");
+document.querySelectorAll(".cf4-log-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".cf4-log-tab").forEach((item) => {
+      const active = item === tab;
+      item.classList.toggle("active", active);
+      item.setAttribute("aria-selected", String(active));
+    });
+    document.querySelectorAll(".cf4-log-panel").forEach((panel) => panel.classList.remove("active"));
+    const panel = document.getElementById(tab.dataset.logPanel);
+    panel.classList.add("active");
+    panel.scrollTop = panel.scrollHeight;
+  });
+});
 
 function writeLog(message, explicitLevel) {
   let tag = "INFO";
@@ -558,6 +573,11 @@ function writeLog(message, explicitLevel) {
   line.textContent = message;
   logBox.appendChild(line);
   logBox.scrollTop = logBox.scrollHeight;
+
+  const processingMatch = message.match(/TRANSMITTAL\s+(\d+)\/(\d+)\s*:/i);
+  if (processingMatch) {
+    updateCf4Row(Number(processingMatch[1]) - 1, "running");
+  }
 }
 
 function clearLogs() {
@@ -565,32 +585,121 @@ function clearLogs() {
 }
 
 // ---------------------------------------------------------------------------
-// AUTOMATION: Report box (same layout as ui.py's show_report)
+// AUTOMATION: Dashboard-style summary report
 // ---------------------------------------------------------------------------
 const reportBox = document.getElementById("reportBox");
 
-function showReport(results) {
-  reportBox.innerHTML = "";
+function statusLabel(status) {
+  return {
+    waiting: "Waiting",
+    running: "Running",
+    success: "Success",
+    skipped: "Skipped",
+    failed: "Failed",
+  }[status] || "Waiting";
+}
 
-  const hdr = document.createElement("div");
-  hdr.className = "log-line INFO";
-  hdr.style.color = "var(--accent)";
-  hdr.textContent = `${"TRANSMITTAL".padEnd(20)} ${"STATUS".padEnd(12)} REMARKS`;
-  reportBox.appendChild(hdr);
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
-  const rule = document.createElement("div");
-  rule.className = "log-line INFO";
-  rule.style.color = "var(--accent)";
-  rule.textContent = "─".repeat(60);
-  reportBox.appendChild(rule);
+function setCf4Rows(transmittals) {
+  cf4Rows = transmittals.map((transmittal) => ({
+    transmittal,
+    status: "waiting",
+  }));
+}
 
-  (results || []).forEach((item) => {
-    const tag = item.status === "SUCCESS" ? "SUCCESS" : item.status === "SKIPPED" ? "WARNING" : "ERROR";
-    const line = document.createElement("div");
-    line.className = `log-line ${tag}`;
-    line.textContent = `${String(item.transmittal).padEnd(20)} ${String(item.status).padEnd(12)} ${item.remarks}`;
-    reportBox.appendChild(line);
+function updateCf4Row(index, status) {
+  if (index < 0 || index >= cf4Rows.length) return;
+  cf4Rows.forEach((row, rowIndex) => {
+    if (row.status === "running" && rowIndex !== index) {
+      row.status = "waiting";
+    }
   });
+  cf4Rows[index].status = status;
+  showReport();
+  const row = reportBox.querySelector(`.cf4-status-row[data-index="${index}"]`);
+  if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function applyCf4Results(results) {
+  const resultByTransmittal = new Map((results || []).map((item) => [
+    String(item.transmittal || ""),
+    String(item.status || "FAILED").toLowerCase(),
+  ]));
+  cf4Rows = cf4Rows.map((row) => ({
+    ...row,
+    status: resultByTransmittal.get(String(row.transmittal)) || row.status,
+  }));
+}
+
+function showReport(results) {
+  if (Array.isArray(results) && results.length) {
+    applyCf4Results(results);
+  }
+
+  const success = cf4Rows.filter((item) => item.status === "success").length;
+  const skipped = cf4Rows.filter((item) => item.status === "skipped").length;
+  const failed = cf4Rows.filter((item) => item.status === "failed").length;
+  const done = success + skipped + failed;
+  const total = cf4Rows.length;
+  const statusText = total
+    ? `CF4 automation ${cf4Running ? "is running" : done === total ? "finished" : "is ready"}. ${done}/${total} result line${done === 1 ? "" : "s"} captured.`
+    : "Enter transmittals and start automation.";
+  const rows = cf4Rows.map((row, index) => `
+    <tr class="cf4-status-row ${row.status}" data-index="${index}">
+      <td>
+        <span class="cf4-row-status">
+          <span class="cf4-row-dot"></span>
+          <span>${statusLabel(row.status)}</span>
+        </span>
+      </td>
+      <td title="${escapeHtml(row.transmittal)}">${escapeHtml(row.transmittal)}</td>
+    </tr>
+  `).join("");
+
+  reportBox.innerHTML = `
+    <div class="cf4-summary">
+      <div class="cf4-summary-strip">
+        <div class="cf4-summary-stat">
+          <div class="label">Total</div>
+          <div class="value">${total}</div>
+        </div>
+        <div class="cf4-summary-stat success">
+          <div class="label">Success</div>
+          <div class="value">${success}</div>
+        </div>
+        <div class="cf4-summary-stat warning">
+          <div class="label">Warnings</div>
+          <div class="value">${skipped}</div>
+        </div>
+        <div class="cf4-summary-stat error">
+          <div class="label">Errors</div>
+          <div class="value">${failed}</div>
+        </div>
+      </div>
+      <div class="cf4-summary-status">${statusText}</div>
+      <div class="cf4-status-table-wrap">
+        <table class="cf4-status-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Transmittal</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || `<tr class="cf4-status-row waiting"><td><span class="cf4-row-status"><span class="cf4-row-dot"></span><span>Ready</span></span></td><td>No transmittals loaded.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+  reportBox.scrollTop = reportBox.scrollHeight;
 }
 
 // ---------------------------------------------------------------------------
@@ -632,7 +741,9 @@ startBtn.addEventListener("click", async () => {
   }
 
   clearLogs();
-  showReport([]);
+  setCf4Rows(transmittals);
+  cf4Running = true;
+  showReport();
   writeLog("Automation started.");
   writeLog(`Found ${transmittals.length} transmittal(s).`);
   disableControls();
@@ -647,6 +758,8 @@ startBtn.addEventListener("click", async () => {
 
   if (result.error) {
     writeLog(`ERROR: ${result.error}`, "ERROR");
+    cf4Running = false;
+    showReport();
     enableControls();
   }
 });
@@ -656,12 +769,17 @@ startBtn.addEventListener("click", async () => {
 // ---------------------------------------------------------------------------
 const socket = io(API_BASE);
 
-socket.on("log", (data) => writeLog(data.message, data.level));
+socket.on("log", (data) => {
+  if (!cf4Running) return;
+  writeLog(data.message, data.level);
+});
 
 socket.on("beacon_done", (data) => {
+  cf4Running = false;
   showReport(data.results);
   enableControls();
 });
 
 // Initialize counts on load
+showReport([]);
 updateCount();

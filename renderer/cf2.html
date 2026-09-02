@@ -428,6 +428,33 @@
     letter-spacing: 0.3px;
     white-space: nowrap;
   }
+  .cf2-summary-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .cf2-summary-stat {
+    padding: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .cf2-summary-stat .label {
+    color: var(--text-sec);
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+  }
+  .cf2-summary-stat .value {
+    margin-top: 4px;
+    color: var(--text-pri);
+    font-size: 18px;
+    font-weight: 900;
+  }
+  .cf2-summary-stat.success .value { color: var(--success); }
+  .cf2-summary-stat.warning .value { color: var(--warning); }
+  .cf2-summary-stat.error .value { color: var(--error); }
   .batch-table-wrap {
     flex: 1;
     min-height: 0;
@@ -458,7 +485,8 @@
     text-align: left;
   }
   .batch-table th:first-child { width: 112px; }
-  .batch-table th:nth-child(2) { width: 34%; }
+  .batch-table th:nth-child(2) { width: 26%; }
+  .batch-table th:nth-child(3) { width: 26%; }
   .batch-table td {
     padding: 9px 12px;
     border-bottom: 1px solid var(--border);
@@ -525,6 +553,9 @@
   @keyframes cf2-current-pulse {
     0%, 100% { opacity: 0.35; transform: scale(0.85); }
     50% { opacity: 1; transform: scale(1.12); }
+  }
+  @media (max-width: 1100px) {
+    .cf2-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   #startBtn {
     width: 100%;
@@ -736,8 +767,8 @@
       <div class="log-section">
         <div class="section-label"><span>▸ AUTOMATION ACTIVITY</span></div>
         <div class="log-tabs" role="tablist" aria-label="Automation logs">
-          <button class="log-tab active" data-log-panel="summaryLogPanel" role="tab" aria-selected="true">Execution Summary</button>
-          <button class="log-tab" data-log-panel="detailsLogPanel" role="tab" aria-selected="false">Step-by-Step Log</button>
+          <button class="log-tab active" data-log-panel="summaryLogPanel" role="tab" aria-selected="true">Summary Report</button>
+          <button class="log-tab" data-log-panel="detailsLogPanel" role="tab" aria-selected="false">Automation Log</button>
         </div>
         <div class="log-box log-panel active" id="summaryLogPanel" role="tabpanel"></div>
         <div class="log-box log-panel" id="detailsLogPanel" role="tabpanel"></div>

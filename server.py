@@ -569,14 +569,16 @@ _soa_running = False
 
 def _run_soa_automation(soa_folder, transmittals):
     global _soa_running
+    soa_automation = None
     try:
         soa_automation = SOAAutomation(soa_folder=soa_folder)
         soa_automation.run(transmittals)
     except Exception as ex:
         socketio.emit("log", {"message": f"FATAL ERROR: {ex}", "level": "ERROR"})
     finally:
+        results = soa_automation.get_results() if soa_automation is not None else []
         _soa_running = False
-        socketio.emit("soa_done", {})
+        socketio.emit("soa_done", {"results": results})
 
 
 @app.route("/api/soa/start", methods=["POST"])
