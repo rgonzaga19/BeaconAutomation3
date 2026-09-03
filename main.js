@@ -940,6 +940,19 @@ function installerPathFor(downloadUrl) {
   return path.join(UPDATE_TEMP_DIR, fileName);
 }
 
+function sendAboutUpdateProgress(data) {
+  const targets = [
+    windows.about?.webContents,
+    workspaceViews.about?.webContents,
+  ];
+
+  for (const webContents of targets) {
+    if (webContents && !webContents.isDestroyed()) {
+      webContents.send("update-progress", data);
+    }
+  }
+}
+
 // Deletes everything in the temp folder except the one file we currently
 // care about, so installers from old updates don't pile up release after
 // release. Safe to call even if nothing (or the folder itself) exists yet.
@@ -1084,7 +1097,7 @@ ipcMain.handle("app:downloadUpdate", async (_event, downloadUrl) => {
                 ? Math.floor(downloadedBytes * 100 / totalBytes)
                 : 0;
 
-            windows.about?.webContents.send("update-progress", {
+            sendAboutUpdateProgress({
                 percent,
                 downloadedBytes,
                 totalBytes
@@ -1098,7 +1111,7 @@ ipcMain.handle("app:downloadUpdate", async (_event, downloadUrl) => {
 
           file.close(() => {
 
-            windows.about?.webContents.send("update-progress", {
+            sendAboutUpdateProgress({
                 percent: 100,
                 downloadedBytes: totalBytes,
                 totalBytes
