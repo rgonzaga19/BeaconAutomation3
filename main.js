@@ -953,39 +953,14 @@ function cleanupOldInstallers(keepFilePath) {
   }
 }
 
-// Start a detached helper that waits for this Electron process to disappear
-// before opening the installer. Launching the installer directly here races
-// with app.quit(): on a fast machine the installer can begin while Beabots is
-// still closing windows or holding files in its installation directory.
-function launchInstallerAfterAppExit(installerPath) {
-  const waitAndLaunch = [
-    "$parentId = [int]$env:BEABOTS_UPDATE_PARENT_PID",
-    "$installer = $env:BEABOTS_UPDATE_INSTALLER",
-    "Wait-Process -Id $parentId -ErrorAction SilentlyContinue",
-    "Start-Process -FilePath $installer",
-  ].join("; ");
-
-  const helper = spawn(
-    "powershell.exe",
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-WindowStyle", "Hidden",
-      "-Command", waitAndLaunch,
-    ],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      env: {
-        ...process.env,
-        BEABOTS_UPDATE_PARENT_PID: String(process.pid),
-        BEABOTS_UPDATE_INSTALLER: installerPath,
-      },
-    }
-  );
-
-  helper.unref();
+// Ask Windows to open the installer through ShellExecute. Unlike spawning a
+// hidden PowerShell relay, this supports the installer's elevation manifest
+// and reports a launch error before Beabots shuts down.
+async function launchInstaller(installerPath) {
+  const launchError = await shell.openPath(installerPath);
+  if (launchError) {
+    throw new Error(`Unable to start the installer: ${launchError}`);
+  }
 }
 
 // Checks whether a complete installer for this exact update is already
@@ -1179,6 +1154,11 @@ ipcMain.handle("app:installUpdate", async () => {
     return false;
   }
 
+  // Start the installer before changing any forced-update state. If Windows
+  // rejects the launch, the error returns to the update window and the app
+  // remains safely locked instead of closing without an installer.
+  await launchInstaller(downloadedInstaller);
+
   // Lift the lock now — app.quit() below closes every window, and the
   // forced window's own close-guard (still keyed on forcedUpdateActive)
   // would otherwise block that shutdown.
@@ -1192,12 +1172,8 @@ ipcMain.handle("app:installUpdate", async () => {
     aboutWindow.setClosable(true);
   }
 
-  // Stop the backend server before replacing the installation
+  // Stop the backend server before replacing the installation.
   stopServer();
-
-  // The helper starts now but does not launch the installer until this
-  // Electron process has completely exited.
-  launchInstallerAfterAppExit(downloadedInstaller);
 
   // Close every Beabots window and finish shutting down the application.
   app.quit();
