@@ -301,8 +301,18 @@ def license_validate():
         entered_key = settings.get("access_key", "").strip()
         license_info = validate_license(entered_key)
 
-        if not license_info["valid"]:
-            return jsonify({"valid": False, "error": "Invalid or expired license."})
+        if not license_info.get("valid"):
+            if license_info.get("code") == "UPDATE_REQUIRED":
+                minimum_version = license_info.get("minimum_version")
+                error = "A newer version of Beabots is required to use this license."
+                if minimum_version:
+                    error += f"\n\nPlease install version {minimum_version} or newer."
+            else:
+                error = license_info.get("reason", "Invalid or expired license.")
+
+            # Preserve the Worker's structured fields so the renderer can use
+            # the required version and download URL in a future update prompt.
+            return jsonify({**license_info, "valid": False, "error": error})
 
         settings["license_owner"] = license_info["owner"]
         settings["license_plan"] = license_info["plan"]

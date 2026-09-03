@@ -1,3 +1,5 @@
+import os
+
 import requests
 
 LICENSE_SERVER = "https://beabot-license.gonzagaromel19.workers.dev"
@@ -31,10 +33,17 @@ def validate_license(license_key: str) -> dict:
     if not license_key:
         return {"valid": False}
 
+    app_version = os.getenv("BEABOTS_APP_VERSION", "").strip()
+    if not app_version:
+        raise LicenseError("Unable to determine the application version.")
+
     try:
         response = requests.post(
             LICENSE_SERVER,
-            json={"license": license_key.strip()},
+            json={
+                "license": license_key.strip(),
+                "app_version": app_version,
+            },
             timeout=10
         )
 

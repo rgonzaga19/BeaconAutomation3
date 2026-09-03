@@ -415,6 +415,10 @@ function startServer() {
   const pythonEnv = {
     ...process.env,
     BEABOTS_PORT: String(SERVER_PORT),
+    // Keep license enforcement tied to the version Electron actually reports.
+    // The Python backend forwards this value to the Cloudflare Worker whenever
+    // it validates a license.
+    BEABOTS_APP_VERSION: app.getVersion(),
     PYTHONIOENCODING: "utf-8",
     PYTHONUTF8: "1",
     PYTHONUNBUFFERED: "1",
@@ -688,8 +692,23 @@ function createAboutWindow(forced = false) {
   return win;
 }
 
+function compareVersions(left, right) {
+  const parse = (value) => String(value)
+    .split("-", 1)[0]
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (difference !== 0) return Math.sign(difference);
+  }
+  return 0;
+}
+
 // Fetches the worker's /update payload and returns it only if it names a
-// mandatory version the user isn't on yet — null in every other case
+// mandatory minimum version the user is below — null in every other case
 // (including any network failure, so a flaky connection at launch can
 // never lock someone out of an app they already have).
 async function checkMandatoryUpdate() {
@@ -699,7 +718,8 @@ async function checkMandatoryUpdate() {
     );
     if (!response.ok) return null;
     const data = await response.json();
-    if (data.mandatory && data.version && data.version !== app.getVersion()) {
+    const minimumVersion = data.minimum_version || data.version;
+    if (data.mandatory && minimumVersion && compareVersions(app.getVersion(), minimumVersion) < 0) {
       return data;
     }
     return null;
