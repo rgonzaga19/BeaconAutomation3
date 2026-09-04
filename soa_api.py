@@ -8,7 +8,10 @@ from datetime import date, datetime, timedelta, timezone
 import requests
 import browser_session
 
-ECLAIMS_API_BASE = "https://eclaimsapi-s4.azurewebsites.net/api/EClaims/v3"
+ECLAIMS_API_BASES = {
+    "s2": "https://eclaimsapi-s2.azurewebsites.net/api/EClaims/v3",
+    "s4": "https://eclaimsapi-s4.azurewebsites.net/api/EClaims/v3",
+}
 DEFAULT_TRANSMITTAL_PACKAGE_TYPES = (7, 1, 2, 3, 4, 5, 6, 8, 9, 10, 0)
 
 class SoaApiError(RuntimeError): pass
@@ -22,6 +25,11 @@ def _headers(json=True):
     h={"Authorization":f"Bearer {token}"}
     if json: h["Content-Type"]="application/json"
     return h
+
+
+def _eclaims_api_base():
+    server = browser_session.load_login_settings().get("server", "s4")
+    return ECLAIMS_API_BASES.get(server, ECLAIMS_API_BASES["s4"])
 
 def _check(r):
     try: r.raise_for_status()
@@ -525,7 +533,7 @@ def update_summary(payload):
 def get_esoa_xml(claim_id, facility_id=263):
     return _json(requests.get(_base_url()+"/api/PHICEsoa/GetESOAXML",headers=_headers(),params={"claimId":claim_id,"facilityId":facility_id},timeout=30))
 def validate_esoa(payload):
-    return _json(requests.post(ECLAIMS_API_BASE+"/ValidateESOA",headers=_headers(),json=payload,timeout=60))
+    return _json(requests.post(_eclaims_api_base()+"/ValidateESOA",headers=_headers(),json=payload,timeout=60))
 def generate_and_upload_esoa(claim_id, facility_id=263):
     return _json(requests.post(_base_url()+"/api/PHICEsoa/GenerateAndUploadEsoaXML",headers=_headers(),json={"claimId":claim_id,"facilityId":facility_id,"isUpload":True},timeout=60))
 

@@ -46,7 +46,10 @@ import requests
 import browser_session
 
 
-ECLAIMS_API_BASE = "https://eclaimsapi-s4.azurewebsites.net/api/EClaims/v3"
+ECLAIMS_API_BASES = {
+    "s2": "https://eclaimsapi-s2.azurewebsites.net/api/EClaims/v3",
+    "s4": "https://eclaimsapi-s4.azurewebsites.net/api/EClaims/v3",
+}
 
 
 class Cf2ApiError(Exception):
@@ -68,6 +71,11 @@ def _headers():
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+
+
+def _eclaims_api_base():
+    server = browser_session.load_login_settings().get("server", "s4")
+    return ECLAIMS_API_BASES.get(server, ECLAIMS_API_BASES["s4"])
 
 
 def _raise_for_status(response, path):
@@ -208,7 +216,7 @@ def validate_claim_eligibility(claim_id, transmittal_id, admission_date, dischar
     claim:
 
       1. GET  /api/PHICCF1/GetPHICCF1Summary?id={claim_id}
-      2. POST {ECLAIMS_API_BASE}/IsClaimEligible
+      2. POST the selected shard's eClaims API /IsClaimEligible
       3. PUT  /api/PHICClaim/EditPHICClaimEligibilityStatus
 
     There is no intermediate API call supplying the remaining-days / NHTS /
@@ -272,7 +280,7 @@ def validate_claim_eligibility(claim_id, transmittal_id, admission_date, dischar
     eligibility_result = _post(
         "/IsClaimEligible",
         json_body=eligibility_request,
-        base=ECLAIMS_API_BASE,
+        base=_eclaims_api_base(),
     )
     if not isinstance(eligibility_result, dict):
         raise Cf2ApiError("IsClaimEligible returned an unexpected response shape.")
@@ -800,7 +808,7 @@ def search_case_rates(rvs_code, target_date_str, hospital_identity):
             "targetDate": target_date_str,
             "phicIdentity": hospital_identity,
         },
-        base=ECLAIMS_API_BASE,
+        base=_eclaims_api_base(),
     )
 
 
@@ -958,7 +966,7 @@ def is_doctor_accredited(
             "dischargeDate": discharge_date_iso,
             "phicIdentity": hospital_identity,
         },
-        base=ECLAIMS_API_BASE,
+        base=_eclaims_api_base(),
     )
 
 

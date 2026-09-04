@@ -388,7 +388,9 @@ def _save_cf4_new_tab_doctor(claim_id, session_dates):
         )
         return
 
-    date_signed = _local_date_to_beacon_utc(last_treatment)
+    date_signed = cf2_api.to_date_signed_iso(
+        _parse_calendar_date(last_treatment)
+    )
 
     saved = beacon_api.new_pdf_cf4(
         claim_id,

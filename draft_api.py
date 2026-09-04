@@ -8,8 +8,10 @@ import requests
 import browser_session
 import cf2_api
 
-ECLAIMS_API_BASE = "https://eclaimsapi-s4.azurewebsites.net/api/EClaims/v3"
-PRODUCT_ID = 271  # Confirmed Beacon eClaims product id in captured account/session.
+ECLAIMS_API_BASES = {
+    "s2": "https://eclaimsapi-s2.azurewebsites.net/api/EClaims/v3",
+    "s4": "https://eclaimsapi-s4.azurewebsites.net/api/EClaims/v3",
+}
 
 class DraftApiError(RuntimeError):
     pass
@@ -25,6 +27,11 @@ def _headers():
     if not token:
         raise DraftApiError("No Beacon bearer token available.")
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def _eclaims_api_base():
+    server = browser_session.load_login_settings().get("server", "s4")
+    return ECLAIMS_API_BASES.get(server, ECLAIMS_API_BASES["s4"])
 
 def _request(method, path, *, params=None, json_body=None, base=None):
     url = f"{base or _base_url()}{path}"
@@ -62,8 +69,35 @@ def _utc_midnight(value):
     # Reuse the already verified PH-local-midnight conversion.
     return cf2_api.to_utc_midnight_iso(datetime.strptime(_mmddyyyy(value), "%m-%d-%Y"))
 
+def get_eclaims_product_id():
+    user_id = browser_session.get_user_id()
+    if not user_id:
+        raise DraftApiError("No userId available.")
+
+    client_id = int(cf2_api.get_client_id())
+    clients = _get("/api/Account/GetAllClientsByUserId", params={"userId": user_id}) or []
+    client = next(
+        (row for row in clients if int(row.get("id") or 0) == client_id),
+        clients[0] if clients else None,
+    )
+    products = (client or {}).get("products") or []
+    product = next(
+        (row for row in products if int(row.get("productType") or 0) == 2),
+        products[0] if products else None,
+    )
+    if not product or not product.get("id"):
+        raise DraftApiError(
+            f"No eClaims product found for clientId={client_id}."
+        )
+    return int(product["id"])
+
+
 def get_primary_hospital_code():
-    rows = _get("/api/Product/GetHospitalCodes", params={"productid": PRODUCT_ID}) or []
+    product_id = get_eclaims_product_id()
+    rows = _get(
+        "/api/Product/GetHospitalCodes",
+        params={"productId": product_id},
+    ) or []
     if not rows:
         raise DraftApiError("GetHospitalCodes returned no hospital codes.")
     return next((x for x in rows if x.get("primaryCode")), rows[0])
@@ -115,7 +149,7 @@ def verify_member_pin(patient, identity):
         "birthdate": _mmddyyyy(patient.get("memberBirthday")),
         "phicIdentity": identity,
     }
-    result = _post("/GetMemberPIN", json_body=payload, base=ECLAIMS_API_BASE) or {}
+    result = _post("/GetMemberPIN", json_body=payload, base=_eclaims_api_base()) or {}
     return re.sub(r"\D", "", str(result.get("pin") or ""))
 
 def _claim_payload(patient, member_pin, transmittal_id, admission_date, discharge_date, include_facility=False):
