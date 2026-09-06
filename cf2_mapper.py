@@ -13,6 +13,8 @@ def build_cf2_data(record):
         last_treatment=record.last_treatment,
         total_sessions=record.total_sessions,
         member_pin=record.member_pin,
+        admission_time=record.admission_time,
+        discharge_time=record.discharge_time,
         session_dates=record.treatment_dates
 
     )

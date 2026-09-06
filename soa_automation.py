@@ -92,7 +92,7 @@ def diagnose_transmittal_search():
     )
 
     if transmittals:
-        logger.success(f"Found {len(transmittals)} transmittals in facility {facility_id}")
+        logger.info(f"Found {len(transmittals)} transmittals in facility {facility_id}")
     else:
         logger.warning(
             f"No transmittals found in facility {facility_id}. "
@@ -354,12 +354,12 @@ def _fix_others_unit_mapping(claim_id):
             )
 
         updated += 1
-        logger.success(
+        logger.info(
             "Updated XLSO Others row "
             f"id={row.get('id')} -> PhilHealth unit PIECE"
         )
 
-    logger.success(
+    logger.info(
         f"XLSO Others unit mapping updated on {updated} row(s)."
     )
     return updated
@@ -504,7 +504,7 @@ class SOAAutomation:
                 raise Exception("Patient name is missing from CF1")
 
             logger.info(f"Patient Name: {self.patient_name}")
-            logger.success(f"Patient Age = {self.patient_age}")
+            logger.info(f"Patient Age = {self.patient_age}")
 
             # Charge state and generated-ESA document state are intentionally
             # independent. A stale ESA document alone does not mean charges
@@ -536,7 +536,7 @@ class SOAAutomation:
                     self.soa_folder,
                 )
                 self.soa_file = str(soa_path)
-                logger.success(f"SOA file found: {self.soa_file}")
+                logger.info(f"SOA file found: {self.soa_file}")
 
                 if soa_api.verify_excel(self.soa_file) is not True:
                     raise Exception("Beacon rejected the SOA workbook")
@@ -679,7 +679,7 @@ class SOAAutomation:
                 )
 
             result["status"] = "success"
-            logger.success(
+            logger.info(
                 "Statement of Account validated and generated successfully."
             )
 
@@ -733,7 +733,7 @@ class SOAAutomation:
                     if result["status"] == "success":
                         self.results.append(result)
                         logger.success(
-                            f"Transmittal '{transmittal_no}' "
+                            f"TRANSMITTAL SUCCESS: '{transmittal_no}' "
                             f"completed successfully on attempt "
                             f"{attempt_number}/{max_attempts}."
                         )
@@ -765,9 +765,9 @@ class SOAAutomation:
                         f"({retries_used}/{self.max_retries})..."
                     )
 
-            logger.success("=" * 60)
-            logger.success("SOA UPLOAD AUTOMATION COMPLETED")
-            logger.success("=" * 60)
+            logger.info("=" * 60)
+            logger.info("SOA UPLOAD AUTOMATION COMPLETED")
+            logger.info("=" * 60)
 
             logger.info("")
             logger.info("RESULTS BREAKDOWN:")
@@ -794,7 +794,7 @@ class SOAAutomation:
                 )
 
                 if result["status"] == "success":
-                    logger.success(f"[SUCCESS] {line}")
+                    logger.info(f"[SUCCESS] {line}")
                 elif result["status"] == "skipped":
                     logger.warning(f"[SKIPPED] {line}")
                 else:

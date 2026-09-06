@@ -593,6 +593,14 @@ def to_utc_noon_iso(local_date):
     return d.strftime("%Y-%m-%dT04:00:00.000Z")
 
 
+def to_utc_datetime_iso(local_date, local_time):
+    """Convert a Philippines-local date and clock time to Beacon UTC ISO."""
+    d = local_date.date() if hasattr(local_date, "date") else local_date
+    local_value = datetime.combine(d, local_time)
+    utc_value = local_value - timedelta(hours=8)
+    return utc_value.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
 def get_cf2(claim_id):
     """
     Get the full current CF2 record.

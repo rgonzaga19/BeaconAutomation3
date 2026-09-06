@@ -36,6 +36,7 @@ from login import load_login_settings, save_login_settings
 from logger import logger
 from patient_record import PatientRecord
 from date_parser import parse_dates
+from time_parser import parse_time_range, format_beacon_time
 from cf2_mapper import build_cf2_data
 from cf2_automation import CF2Automation
 from soa_automation import SOAAutomation
@@ -336,6 +337,15 @@ def license_validate():
 def _analyze_workbook(workbook, claim_year, claim_month=None, mode="new_draft"):
     sheet = workbook["Sheet1"]
     records = []
+    time_column = next(
+        (
+            cell.column
+            for cell in sheet[1]
+            if str(cell.value or "").strip().casefold()
+            in ("time", "time (optional)")
+        ),
+        None,
+    )
 
     for row in range(2, sheet.max_row + 1):
         # Column layout is the same in both templates — only what column A
@@ -351,6 +361,11 @@ def _analyze_workbook(workbook, claim_year, claim_month=None, mode="new_draft"):
         doctor = sheet[f"C{row}"].value
         accreditation = sheet[f"D{row}"].value
         treatment_dates = sheet[f"E{row}"].value
+        time_range = sheet.cell(row=row, column=time_column).value if time_column else None
+        try:
+            admission_time, discharge_time = parse_time_range(time_range)
+        except ValueError as ex:
+            raise ValueError(f"Row {row}: {ex}") from ex
 
         identifier_str = str(identifier).strip() if identifier is not None else ""
 
@@ -360,7 +375,10 @@ def _analyze_workbook(workbook, claim_year, claim_month=None, mode="new_draft"):
             doctor=str(doctor),
             accreditation_no=str(accreditation),
             treatment_dates_raw=str(treatment_dates),
+            time_range_raw=str(time_range).strip() if time_range is not None else "",
             member_pin=identifier_str if mode == "new_draft" else "",
+            admission_time=admission_time,
+            discharge_time=discharge_time,
             source_row=row,
         )
 
@@ -391,6 +409,9 @@ def _record_to_dict(record, cf2, mode="new_draft"):
         "doctor": record.doctor,
         "accreditation_no": record.accreditation_no,
         "treatment_dates_raw": record.treatment_dates_raw,
+        "time_range_raw": record.time_range_raw,
+        "admission_time": format_beacon_time(record.admission_time) if record.admission_time else None,
+        "discharge_time": format_beacon_time(record.discharge_time) if record.discharge_time else None,
         "parsed_dates": [d.strftime("%m-%d-%Y") for d in record.treatment_dates],
         "first_treatment": record.first_treatment.strftime("%m-%d-%Y") if record.first_treatment else None,
         "last_treatment": record.last_treatment.strftime("%m-%d-%Y") if record.last_treatment else None,
@@ -430,7 +451,11 @@ def cf2_upload():
     except Exception as ex:
         return jsonify({"error": str(ex)}), 400
 
-    records = _analyze_workbook(workbook, claim_year, claim_month, mode)
+    try:
+        records = _analyze_workbook(workbook, claim_year, claim_month, mode)
+    except ValueError as ex:
+        workbook.close()
+        return jsonify({"error": str(ex)}), 400
     _state["selected_file"] = filename
     _state["patient_records"] = records
     _state["cf2_mode"] = mode

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, time
 
 
 @dataclass
@@ -15,7 +15,13 @@ class PatientRecord:
 
     treatment_dates_raw: str
 
+    time_range_raw: str = ""
+
     member_pin: str = ""
+
+    admission_time: time | None = None
+
+    discharge_time: time | None = None
 
     treatment_dates: list[date] = field(default_factory=list)
 

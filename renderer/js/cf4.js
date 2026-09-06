@@ -577,7 +577,24 @@ function writeLog(message, explicitLevel) {
   const processingMatch = message.match(/TRANSMITTAL\s+(\d+)\/(\d+)\s*:/i);
   if (processingMatch) {
     updateCf4Row(Number(processingMatch[1]) - 1, "running");
+    return;
   }
+
+  const terminalMatch = message.match(/TRANSMITTAL\s+(SUCCESS|SKIPPED|FAILED):\s*(.+)/i);
+  if (!terminalMatch) return;
+
+  const transmittal = terminalMatch[2].trim();
+  const rowIndex = cf4Rows.findIndex(
+    (row) => String(row.transmittal) === transmittal
+  );
+  if (rowIndex < 0) return;
+
+  const status = terminalMatch[1].toUpperCase() === "SUCCESS"
+    ? "success"
+    : terminalMatch[1].toUpperCase() === "SKIPPED"
+      ? "skipped"
+      : "failed";
+  updateCf4Row(rowIndex, status);
 }
 
 function clearLogs() {

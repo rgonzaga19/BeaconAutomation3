@@ -570,6 +570,33 @@
     box-shadow: none;
   }
   #startBtn:hover { box-shadow: none; }
+  .automation-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+    flex: none;
+  }
+  .automation-actions #startBtn { flex: 1; margin-top: 0; }
+  #copyTransmittalsBtn {
+    flex: 0 0 auto;
+    min-width: 176px;
+    padding: 13px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background-color .2s ease, color .2s ease, transform .2s ease;
+  }
+  #copyTransmittalsBtn.copied {
+    color: var(--bg-dark);
+    background: var(--success, #4ade80);
+    animation: copied-pop .45s ease;
+  }
+  @keyframes copied-pop {
+    0% { transform: scale(1); }
+    45% { transform: scale(1.06); }
+    100% { transform: scale(1); }
+  }
   @property --cf2-progress-angle {
     syntax: "<angle>";
     initial-value: 0deg;
@@ -772,10 +799,16 @@
         </div>
         <div class="log-box log-panel active" id="summaryLogPanel" role="tabpanel"></div>
         <div class="log-box log-panel" id="detailsLogPanel" role="tabpanel"></div>
-        <button class="solid-btn" id="startBtn">
-          <span class="icon-flat"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4.5v15l13-7.5z"/></svg></span>
-          <span id="startBtnLabel">Start Automation</span>
-        </button>
+        <div class="automation-actions">
+          <button class="solid-btn" id="startBtn">
+            <span class="icon-flat"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4.5v15l13-7.5z"/></svg></span>
+            <span id="startBtnLabel">Start Automation</span>
+          </button>
+          <button class="cyber-btn" id="copyTransmittalsBtn" type="button" disabled>
+            <span class="icon-flat"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></span>
+            <span id="copyTransmittalsLabel">Copy Transmittal</span>
+          </button>
+        </div>
       </div>
 
     </div>

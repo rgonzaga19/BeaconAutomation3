@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, time
 from typing import List
 
 
@@ -14,4 +14,6 @@ class CF2Data:
     last_treatment: date
     total_sessions: int
     member_pin: str = ""
+    admission_time: time | None = None
+    discharge_time: time | None = None
     session_dates: List[date] = field(default_factory=list)

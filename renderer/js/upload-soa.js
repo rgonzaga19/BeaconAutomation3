@@ -232,8 +232,6 @@ function renderFinalSummary(results) {
 
 function updateSummaryFromLog(message, level = "INFO") {
   const text = String(message || "");
-  const upper = text.toUpperCase();
-  let changed = false;
   const processingMatch = text.match(/PROCESSING TRANSMITTAL\s+(\d+)\/(\d+)/i);
 
   if (processingMatch) {
@@ -242,20 +240,27 @@ function updateSummaryFromLog(message, level = "INFO") {
     return;
   }
 
-  if (upper.includes("[SUCCESS]")) {
-    soaSummary.success += 1;
-    changed = true;
-  } else if (upper.includes("[SKIPPED]")) {
-    soaSummary.warning += 1;
-    changed = true;
-  } else if (upper.includes("[FAILED]") || upper.includes("FATAL ERROR")) {
-    soaSummary.error += 1;
-    changed = true;
-  }
+  const successMatch = text.match(/TRANSMITTAL SUCCESS:\s*'([^']+)'/i);
+  const skippedMatch = text.match(/Transmittal\s+'([^']+)'\s+was skipped\./i);
+  const failedMatch = text.match(/Transmittal\s+'([^']+)'\s+FAILED\s+after/i);
+  const terminalMatch = successMatch || skippedMatch || failedMatch;
+  if (!terminalMatch) return;
 
-  if (changed) {
-    renderSummary();
-  }
+  const transmittal = terminalMatch[1];
+  const rowIndex = soaRows.findIndex(
+    (row) => String(row.transmittal) === String(transmittal)
+  );
+  if (rowIndex < 0) return;
+
+  soaRows[rowIndex].status = successMatch
+    ? "success"
+    : skippedMatch
+      ? "skipped"
+      : "failed";
+  soaSummary.success = soaRows.filter((row) => row.status === "success").length;
+  soaSummary.warning = soaRows.filter((row) => row.status === "skipped").length;
+  soaSummary.error = soaRows.filter((row) => row.status === "failed").length;
+  renderSummary();
 }
 
 // ---------------------------------------------------------------------------

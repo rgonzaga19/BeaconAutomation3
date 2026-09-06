@@ -104,6 +104,20 @@ let lastDetailLine = "";
 let lastDetailAt = 0;
 let batchRecords = [];
 let batchStatuses = new Map();
+const copyTransmittalsBtn = document.getElementById("copyTransmittalsBtn");
+const copyTransmittalsLabel = document.getElementById("copyTransmittalsLabel");
+let copyFeedbackTimer = null;
+
+function getTransmittalNumbers() {
+  return batchRecords
+    .map((record) => record.generated_transmittal || record.cf2?.transmittal || "")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+}
+
+function updateCopyTransmittalsButton() {
+  copyTransmittalsBtn.disabled = getTransmittalNumbers().length === 0;
+}
 
 function log(text, level = "INFO", target = summaryLogBox) {
   const line = document.createElement("div");
@@ -117,6 +131,7 @@ function clearLog() {
   detailsLogBox.innerHTML = "";
   batchRecords = [];
   batchStatuses = new Map();
+  updateCopyTransmittalsButton();
 }
 
 function scrollLogToEnd() {
@@ -206,6 +221,7 @@ function renderBatchTable(records) {
     String(record.excel_row),
     { status: "waiting", phase: "" },
   ]));
+  updateCopyTransmittalsButton();
 
   if (!batchRecords.length) {
     summaryLogBox.innerHTML = `<div class="batch-empty">Upload an Excel workbook to show the live CF2 batch table.</div>`;
@@ -293,6 +309,13 @@ function updateBatchRow(progress) {
   if (generatedTransmittalCell && progress.transmittal) {
     generatedTransmittalCell.textContent = progress.transmittal;
     generatedTransmittalCell.title = progress.transmittal;
+  }
+  if (progress.transmittal) {
+    const record = batchRecords.find(
+      (item) => String(item.excel_row) === rowKey
+    );
+    if (record) record.generated_transmittal = String(progress.transmittal);
+    updateCopyTransmittalsButton();
   }
   row.scrollIntoView({ block: "nearest", behavior: "smooth" });
   updateBatchHeader(progress);
@@ -399,6 +422,7 @@ uploadBtn.addEventListener("click", async () => {
     log(`Doctor      : ${record.doctor}`);
     log(`Accred. No. : ${record.accreditation_no}`);
     log(`Dates       : ${record.treatment_dates_raw}`);
+    log(`Time        : ${record.time_range_raw || "12:00 AM - 12:00 PM (default)"}`);
     log(`Parsed Dates:`);
     record.parsed_dates.forEach((d) => log(`   ${d}`));
 
@@ -559,6 +583,26 @@ document.getElementById("guideCard").addEventListener("click", () => {
 // ---------------------------------------------------------------------------
 const startBtn = document.getElementById("startBtn");
 const startBtnLabel = document.getElementById("startBtnLabel");
+
+copyTransmittalsBtn.addEventListener("click", async () => {
+  const transmittals = getTransmittalNumbers();
+  if (!transmittals.length) return;
+
+  try {
+    await navigator.clipboard.writeText(transmittals.join("\n"));
+    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer);
+    copyTransmittalsBtn.classList.remove("copied");
+    void copyTransmittalsBtn.offsetWidth;
+    copyTransmittalsBtn.classList.add("copied");
+    copyTransmittalsLabel.textContent = `Copied ${transmittals.length}!`;
+    copyFeedbackTimer = setTimeout(() => {
+      copyTransmittalsBtn.classList.remove("copied");
+      copyTransmittalsLabel.textContent = "Copy Transmittal";
+    }, 1600);
+  } catch (error) {
+    showModal("Copy Failed", "Unable to copy the transmittal numbers to the clipboard.");
+  }
+});
 
 function setControlsRunning(running) {
   startBtn.disabled = running;

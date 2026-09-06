@@ -1,10 +1,11 @@
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, time
 import openpyxl
 from cf2_mapper import build_cf2_data
 import cf2_api
+from time_parser import format_beacon_time
 from cf2_fees import get_fees
 from draft_automation import (
     run_create_draft_flow,
@@ -444,17 +445,22 @@ class CF2Automation:
                 cf2_record["patientTypeCode"] = "O"
                 cf2_record["patientTypeValue"] = "Outpatient"
 
-            # Admission stays at local midnight; discharge moves to
-            # local noon (AM -> PM) — confirmed via HAR, see
-            # to_utc_midnight_iso / to_utc_noon_iso docstrings.
-            admission_iso = cf2_api.to_utc_midnight_iso(data.first_treatment)
-            discharge_iso = cf2_api.to_utc_noon_iso(data.last_treatment)
+            # Use the optional workbook range when supplied. Otherwise retain
+            # the established local-midnight admission/local-noon discharge.
+            admission_time = data.admission_time or time(0, 0)
+            discharge_time = data.discharge_time or time(12, 0)
+            admission_iso = cf2_api.to_utc_datetime_iso(
+                data.first_treatment, admission_time
+            )
+            discharge_iso = cf2_api.to_utc_datetime_iso(
+                data.last_treatment, discharge_time
+            )
             cf2_record["admissionDate"] = data.first_treatment.strftime("%m-%d-%Y")
             cf2_record["admissionDateTime"] = admission_iso
-            cf2_record["admissionTime"] = admission_iso
+            cf2_record["admissionTime"] = format_beacon_time(admission_time)
             cf2_record["dischargeDate"] = data.last_treatment.strftime("%m-%d-%Y")
             cf2_record["dischargeDateTime"] = discharge_iso
-            cf2_record["dischargeTime"] = discharge_iso
+            cf2_record["dischargeTime"] = format_beacon_time(discharge_time)
 
             # _fill_disposition_and_diagnosis
             # preserve the established CF2 behavior.

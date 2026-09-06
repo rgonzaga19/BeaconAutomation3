@@ -388,9 +388,10 @@ def _save_cf4_new_tab_doctor(claim_id, session_dates):
         )
         return
 
-    date_signed = cf2_api.to_date_signed_iso(
-        _parse_calendar_date(last_treatment)
-    )
+    # NewPdfCF4 is rendered in Philippine local time. Sending 16:00Z on the
+    # same calendar day advances the PDF date to the following day (UTC+8),
+    # so represent local midnight using the previous UTC day instead.
+    date_signed = _local_date_to_beacon_utc(last_treatment)
 
     saved = beacon_api.new_pdf_cf4(
         claim_id,
@@ -402,7 +403,7 @@ def _save_cf4_new_tab_doctor(claim_id, session_dates):
             "NewPdfCF4 returned an unsuccessful/empty response"
         )
 
-    logger.success(
+    logger.info(
         "CF4 New tab updated: "
         f"doctor={doctor_name}, last treatment={last_treatment}"
     )
@@ -479,7 +480,7 @@ def _map_medicine(medicine, medicine_index):
     for field in MAPPING_FIELDS:
         medicine[field] = selected.get(field)
 
-    logger.success(
+    logger.info(
         f"Medicine mapped: {selected.get('drugDescription')}"
     )
     return True
@@ -700,7 +701,7 @@ def _process_transmittal(
         if eligibility.get("skipped"):
             logger.info("No validation required — skipping.")
         else:
-            logger.success("Eligibility validated through API.")
+            logger.info("Eligibility validated through API.")
 
     session_dates = _session_dates_from_cf2(claim_id)
     logger.info(f"Found {len(session_dates)} session date(s).")
@@ -725,6 +726,7 @@ def _process_transmittal(
                 "No medicine found, no uploaded SOA, skipping patient"
             ),
         )
+        logger.warning(f"TRANSMITTAL SKIPPED: {transmittal_no}")
         return
 
     logger.info(f"Found {len(medicines)} medicine row(s).")
@@ -734,7 +736,7 @@ def _process_transmittal(
         if _map_medicine(medicine, medicine_index):
             mapped_count += 1
 
-    logger.success(
+    logger.info(
         f"Medicine mapping complete: "
         f"{mapped_count}/{len(medicines)} recognized row(s) mapped."
     )
@@ -761,7 +763,7 @@ def _process_transmittal(
         session_dates,
     )
 
-    logger.success(f"SUCCESS: Patient {transmittal_no} saved")
+    logger.success(f"TRANSMITTAL SUCCESS: {transmittal_no}")
     report.success(
         transmittal=transmittal_no,
         mapped=len(medicines),
@@ -818,6 +820,7 @@ def run(transmittals, auto_encode_cf4=False, cf4_data=None):
                 f"({transmittal_no}): {last_error}"
             )
             logger.warning("Skipping to next patient...")
+            logger.error(f"TRANSMITTAL FAILED: {transmittal_no}")
             report.failed(
                 transmittal=transmittal_no,
                 remarks=str(last_error),
