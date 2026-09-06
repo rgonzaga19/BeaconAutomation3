@@ -591,6 +591,17 @@ def _normalize_cf4_save_payload(
                 for session_date in session_dates
             ]
 
+    # GetCf4Values can return null sections on an unencoded CF4. Auto Encode
+    # initializes them above; mapping-only saves need the same container shape
+    # without applying configured clinical findings or adding treatment orders.
+    for key, empty in (
+        ("phiccF4SignAndSymptoms", {}),
+        ("phiccF4PhysicalExam", {}),
+        ("phiccF4DoctorsOrder", []),
+    ):
+        if payload.get(key) is None:
+            payload[key] = empty
+
     # Match the successful Beacon CF4 save request shape: physical-exam and
     # symptom values are present both in their nested objects and flattened.
     exam = payload.get("phiccF4PhysicalExam") or {}
