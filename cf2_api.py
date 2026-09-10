@@ -141,6 +141,23 @@ def _put(path, json_body=None, params=None, base=None):
     return response.json() if response.content else None
 
 
+def _delete(path, params=None, base=None):
+    url = f"{base or _base_url()}{path}"
+    response = requests.delete(
+        url, headers=_headers(), params=params, timeout=20
+    )
+    _raise_for_status(response, path)
+    return response.json() if response.content else None
+
+
+def _required_record_id(record, *field_names):
+    for field_name in ("id", *field_names):
+        value = record.get(field_name) if isinstance(record, dict) else None
+        if value not in (None, ""):
+            return value
+    raise Cf2ApiError(f"Record has no usable id: {record!r}")
+
+
 # ---------------------------------------------------------------------
 # Page URL -> IDs
 # ---------------------------------------------------------------------
@@ -737,6 +754,26 @@ def edit_primary_discharge_diagnosis(cf2_id, discharge_diagnosis_id):
     )
 
 
+def delete_discharge_diagnosis(discharge_diagnosis_id):
+    """Delete a PHIC discharge diagnosis row."""
+    return _delete(
+        "/api/PHICDischargeDiagnosis/DeletePHICDischargeDiagnosis",
+        params={"phicDischargeDiagnosisId": discharge_diagnosis_id},
+    )
+
+
+def delete_discharge_diagnoses(records):
+    for record in records or []:
+        record_id = _required_record_id(record, "phicDischargeDiagnosisId")
+        try:
+            delete_discharge_diagnosis(record_id)
+        except Cf2ApiError as exc:
+            raise Cf2ApiError(
+                f"Could not delete discharge diagnosis id={record_id}; "
+                f"record={record!r}; {exc}"
+            ) from exc
+
+
 def add_discharge_diagnosis_n18_5(cf2_id):
     """
     Convenience wrapper matching exactly what
@@ -799,6 +836,52 @@ def get_case_rates(cf2_id):
         "/api/PHICAllCaseRate/GetPHICAllCaseRates",
         params={"phicCf2Id": cf2_id},
     )
+
+
+def delete_surgical_procedure(surgical_procedure_id):
+    """Delete a PHIC surgical procedure row."""
+    return _delete(
+        "/api/PHICSurgicalProcedure/DeletePHICSurgicalProcedure",
+        params={"surgicalProcedureId": surgical_procedure_id},
+    )
+
+
+def delete_surgical_procedures(records):
+    for record in records or []:
+        record_id = _required_record_id(record, "surgicalProcedureId")
+        try:
+            delete_surgical_procedure(record_id)
+        except Cf2ApiError as exc:
+            raise Cf2ApiError(
+                f"Could not delete surgical procedure id={record_id}; "
+                f"record={record!r}; {exc}"
+            ) from exc
+
+
+def delete_case_rate(all_case_rate_id, claim_id, transmittal_id):
+    """Delete a PHIC all-case-rate tag before replacing a procedure."""
+    return _delete(
+        "/api/PHICAllCaseRate/DeletePHICAllCaseRate",
+        params={
+            "allCaseRateId": all_case_rate_id,
+            "claimId": claim_id,
+            "transmittalId": transmittal_id,
+        },
+    )
+
+
+def delete_case_rates(records, claim_id, transmittal_id):
+    for record in records or []:
+        record_id = _required_record_id(
+            record, "allCaseRateId", "phicAllCaseRateId"
+        )
+        try:
+            delete_case_rate(record_id, claim_id, transmittal_id)
+        except Cf2ApiError as exc:
+            raise Cf2ApiError(
+                f"Could not delete 1st Case Rate id={record_id}; "
+                f"record={record!r}; {exc}"
+            ) from exc
 
 
 def search_case_rates(rvs_code, target_date_str, hospital_identity):

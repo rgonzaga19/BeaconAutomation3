@@ -344,6 +344,18 @@ def _doctor_full_name(doctor):
     )
 
 
+def _cf4_signature_doctor_name(doctor_name):
+    doctor_name = str(doctor_name or "").strip()
+    if not doctor_name:
+        return ""
+
+    normalized = doctor_name.upper()
+    if normalized.startswith(("DR. ", "DR ", "DRA. ", "DRA ")):
+        return doctor_name
+
+    return f"DR. {doctor_name}"
+
+
 def _last_treatment_date(session_dates):
     """Return the latest CF2 treatment/session date."""
     dated = [
@@ -371,7 +383,7 @@ def _save_cf4_new_tab_doctor(claim_id, session_dates):
 
     # Preserve the automation's established first-row behavior for claim data.
     doctor = doctors[0]
-    doctor_name = _doctor_full_name(doctor)
+    doctor_name = _cf4_signature_doctor_name(_doctor_full_name(doctor))
 
     if not doctor_name:
         logger.warning(
@@ -573,23 +585,28 @@ def _normalize_cf4_save_payload(
             cf4_data,
         )
 
-        # Preserve the proven duplicate-prevention rule exactly: if Course in
-        # the Ward already has any entry, do not append another session set.
+        # Replace any existing Course in the Ward rows with the current
+        # session set so reruns refresh stale entries instead of skipping.
         existing_orders = payload.get("phiccF4DoctorsOrder") or []
+        order_text = cf4_data["course_in_ward_order"]
+        payload["phiccF4DoctorsOrder"] = [
+            {
+                "date": _local_date_to_beacon_utc(session_date),
+                "order": order_text,
+            }
+            for session_date in session_dates
+        ]
         if existing_orders:
             logger.info(
-                "Course in the Ward already has entries — "
-                "skipping re-add to avoid duplicates."
+                "Course in the Ward already has entries - "
+                f"replacing {len(existing_orders)} row(s) with "
+                f"{len(payload['phiccF4DoctorsOrder'])} new row(s)."
             )
         else:
-            order_text = cf4_data["course_in_ward_order"]
-            payload["phiccF4DoctorsOrder"] = [
-                {
-                    "date": _local_date_to_beacon_utc(session_date),
-                    "order": order_text,
-                }
-                for session_date in session_dates
-            ]
+            logger.info(
+                "Course in the Ward has no existing entries - "
+                f"adding {len(payload['phiccF4DoctorsOrder'])} row(s)."
+            )
 
     # GetCf4Values can return null sections on an unencoded CF4. Auto Encode
     # initializes them above; mapping-only saves need the same container shape

@@ -283,6 +283,8 @@ class CF2Automation:
             critical=False,
         )
 
+        self._progress("Removing existing 1st Case Rate tags via API...")
+        self._delete_existing_case_rates()
         self._progress("Adding discharge diagnosis via API...")
         self._add_discharge_diagnosis()
         self._progress("Adding surgical procedure via API...")
@@ -581,11 +583,46 @@ class CF2Automation:
     def _add_discharge_diagnosis(self):
         ids = self._get_ids()
         existing = cf2_api.get_discharge_diagnoses(ids["claim_id"])
-        if existing:
-            print("Discharge Diagnosis already exists (via API) - skipping.")
+        target = next(
+            (
+                diagnosis for diagnosis in existing or []
+                if str(diagnosis.get("icD10Code") or "").strip().upper()
+                == "N18.5"
+            ),
+            None,
+        )
+
+        if target:
+            target_id = target.get("id")
+            if not target.get("primary"):
+                cf2_api.edit_primary_discharge_diagnosis(
+                    ids["claim_id"],
+                    target_id,
+                )
+            print(
+                "Existing N18.5 Discharge Diagnosis found via API - "
+                "kept and set as Primary."
+            )
+            extras = [
+                diagnosis for diagnosis in existing or []
+                if diagnosis.get("id") != target_id
+            ]
+            if extras:
+                cf2_api.delete_discharge_diagnoses(extras)
+                print(
+                    "Extra Discharge Diagnosis row(s) deleted via API."
+                )
             return
+
         cf2_api.add_discharge_diagnosis_n18_5(ids["claim_id"])
         print("Discharge Diagnosis added and set as Primary (via API).")
+
+        if existing:
+            cf2_api.delete_discharge_diagnoses(existing)
+            print(
+                "Previous Discharge Diagnosis row(s) deleted via API after "
+                "creating N18.5."
+            )
 
         
 
@@ -596,12 +633,32 @@ class CF2Automation:
 
 
 
+    def _delete_existing_case_rates(self):
+        ids = self._get_ids()
+        existing_case_rates = cf2_api.get_case_rates(ids["claim_id"])
+        if not existing_case_rates:
+            return
+
+        cf2_api.delete_case_rates(
+            existing_case_rates,
+            ids["claim_id"],
+            ids["transmittal_id"],
+        )
+        print(
+            "Existing 1st Case Rate tag(s) deleted via API before "
+            "refreshing CF2 validation rows."
+        )
+
+
     def _add_surgical_procedure(self, data):
         ids = self._get_ids()
         existing = cf2_api.get_surgical_procedures(ids["claim_id"])
         if existing:
-            print("Surgical Procedure already exists (via API) - skipping creation.")
-            return
+            cf2_api.delete_surgical_procedures(existing)
+            print(
+                "Existing Surgical Procedure row(s) deleted via API - "
+                "recreating Hemodialysis procedure."
+            )
 
         icd10_matches = cf2_api.search_icd10("N18.5")
         if not icd10_matches:
