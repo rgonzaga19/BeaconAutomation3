@@ -152,13 +152,31 @@ def verify_member_pin(patient, identity):
     result = _post("/GetMemberPIN", json_body=payload, base=_eclaims_api_base()) or {}
     return re.sub(r"\D", "", str(result.get("pin") or ""))
 
+
+def _first_present(record, *field_names):
+    for field_name in field_names:
+        value = record.get(field_name)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
 def _claim_payload(patient, member_pin, transmittal_id, admission_date, discharge_date, include_facility=False):
     identity = cf2_api.get_hospital_identity(transmittal_id)
+    member_pen = _first_present(
+        patient,
+        "memberPEN",
+        "memberPen",
+        "memberpen",
+        "pen",
+        "PEN",
+    )
     p = {
         # Both captured Member and Dependent Add Claims requests send this
         # literal value. Patient relationship is carried separately below.
         "patientis": "M - Member",
         "memberemployername": patient.get("memberEmployerName") or "",
+        "memberpen": member_pen,
         "membermiddlename": patient.get("memberMiddlename") or "",
         "memberlastname": patient.get("memberLastname") or "",
         "memberfirstname": patient.get("memberFirstname") or "",
